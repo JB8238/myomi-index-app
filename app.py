@@ -207,20 +207,9 @@ df_raw = load_csv(str(selected_file))
 df = normalize_df(df_raw)
 
 # # --- Home上部：クイック操作 ---
-# colA, colB, colC = st.columns([1, 1, 1])
 
 places = sorted(df["場所"].dropna().unique().tolist()) if "場所" in df.columns else []
 races = sorted(df["R"].dropna().unique().astype(int).tolist()) if "R" in df.columns else []
-
-# with colA:
-#     place = st.selectbox("開催（場所）", options=places) if places else None
-# with colB:
-#     race_no = st.selectbox("R", options=races) if races else None
-# with colC:
-#     pass_only = st.toggle("✅ 合格馬だけ（総合利益度 >= 0）", value=True)
-
-# # 追加：欠損扱い（総合利益度が空欄の行があり得るため）[7](https://dev.to/jamesbmour/streamlit-part-6-mastering-layouts-4hci)
-# include_missing = st.sidebar.checkbox("総合利益度が欠損の馬も表示する", value=False)
 
 with st.sidebar:
     st.header("条件選択")
@@ -262,18 +251,74 @@ filtered = apply_filters(
 
 st.write(f"**選択中：** 場所={place if place else '-'} / R={race_no if race_no is not None else '-'} / 合格のみ={'ON' if pass_only else 'OFF'}")
 
-# --- サマリー（任意） ---
-st.subheader("サマリー")
-total_count = int(len(df[(df["場所"] == place) & (df["R"] == race_no)])) if place and race_no is not None else int(len(df))
-pass_count = int(len(filtered))
-c1, c2, c3 = st.columns(3)
-c1.metric("表示件数", pass_count)
-c2.metric("対象件数（開催×R）", total_count)
-if "総合利益度" in filtered.columns and not filtered["総合利益度"].dropna().empty:
-    c3.metric("総合利益度 最大", f"{filtered['総合利益度'].max():.3f}")
-else:
-    c3.metric("総合利益度 最大", "—")
+# # --- サマリー（任意） ---
+# st.subheader("サマリー")
+# total_count = int(len(df[(df["場所"] == place) & (df["R"] == race_no)])) if place and race_no is not None else int(len(df))
+# pass_count = int(len(filtered))
+# c1, c2, c3 = st.columns(3)
+# c1.metric("表示件数", pass_count)
+# c2.metric("対象件数（開催×R）", total_count)
+# if "総合利益度" in filtered.columns and not filtered["総合利益度"].dropna().empty:
+#     c3.metric("総合利益度 最大", f"{filtered['総合利益度'].max():.3f}")
+# else:
+#     c3.metric("総合利益度 最大", "—")
 
-# --- 結果表示（カード） ---
-st.subheader("結果（カード表示）")
-render_cards(filtered)
+# # --- 結果表示（カード） ---
+# st.subheader("結果（カード表示）")
+# render_cards(filtered)
+
+
+st.subheader("サマリー")
+
+# ======================================
+# ① モバイル向け：上部カード（KPI）
+# ======================================
+pass_count = int(len(filtered))
+total_count = int(
+    len(df[(df["場所"] == place) & (df["R"] == race_no)])
+) if place and race_no is not None and "場所" in df.columns and "R" in df.columns else int(len(df))
+
+# 2列にしてスマホで縦積みになりやすい形にする
+k1, k2 = st.columns(2)
+with k1:
+    st.metric("合格頭数", f"{pass_count} / {total_count}")
+with k2:
+    if "総合利益度" in filtered.columns and not filtered["総合利益度"].dropna().empty:
+        st.metric("総合利益度 最大", f"{filtered['総合利益度'].max():.3f}")
+    else:
+        st.metric("総合利益度 最大", "—")
+
+# 平均も欲しければ（任意）
+if "総合利益度" in filtered.columns and not filtered["総合利益度"].dropna().empty:
+    st.metric("総合利益度 平均", f"{filtered['総合利益度'].mean():.3f}")
+
+# ======================================
+# ②③ モバイル向け：表表示（設定＋列間引き）
+# ======================================
+st.subheader("結果（モバイル最適）")
+
+# ② 表に出す列を絞る（横スクロールを減らす）
+mobile_cols = [
+    c for c in ["馬番", "馬名", "総合利益度", "総合利益度順位"]
+    if c in filtered.columns
+]
+
+if filtered.empty:
+    st.info("条件に合う馬がありません。")
+else:
+    # ② st.dataframe をモバイル向けに調整（横幅フィット・インデックス非表示・高さ固定）
+    st.dataframe(
+        filtered[mobile_cols] if mobile_cols else filtered,
+        use_container_width=True,
+        hide_index=True,
+        height=420,
+    )
+
+    # 詳細は折り畳み（必要なら）
+    with st.expander("詳細（全列）"):
+        st.dataframe(
+            filtered,
+            use_container_width=True,
+            hide_index=True,
+            height=520,
+        )
