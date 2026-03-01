@@ -303,12 +303,21 @@ mobile_cols = [
     if c in filtered.columns
 ]
 
-if filtered.empty:
+if "総合利益度" in filtered.columns:
+    filtered_sorted = filtered.sort_values(
+        by="総合利益度",
+        ascending=False,
+        na_position="last",
+    )
+else:
+    filtered_sorted = filtered
+
+if filtered_sorted.empty:
     st.info("条件に合う馬がありません。")
 else:
     # ② st.dataframe をモバイル向けに調整（横幅フィット・インデックス非表示・高さ固定）
     st.dataframe(
-        filtered[mobile_cols] if mobile_cols else filtered,
+        filtered_sorted[mobile_cols] if mobile_cols else filtered_sorted,
         use_container_width=True,
         hide_index=True,
         height=420,
@@ -317,7 +326,7 @@ else:
     # 詳細は折り畳み（必要なら）
     with st.expander("詳細（全列）"):
         st.dataframe(
-            filtered,
+            filtered_sorted,
             use_container_width=True,
             hide_index=True,
             height=520,
