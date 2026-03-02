@@ -251,23 +251,7 @@ filtered = apply_filters(
 
 st.write(f"**選択中：** 場所={place if place else '-'} / R={race_no if race_no is not None else '-'} / 合格のみ={'ON' if pass_only else 'OFF'}")
 
-# # --- サマリー（任意） ---
-# st.subheader("サマリー")
-# total_count = int(len(df[(df["場所"] == place) & (df["R"] == race_no)])) if place and race_no is not None else int(len(df))
-# pass_count = int(len(filtered))
-# c1, c2, c3 = st.columns(3)
-# c1.metric("表示件数", pass_count)
-# c2.metric("対象件数（開催×R）", total_count)
-# if "総合利益度" in filtered.columns and not filtered["総合利益度"].dropna().empty:
-#     c3.metric("総合利益度 最大", f"{filtered['総合利益度'].max():.3f}")
-# else:
-#     c3.metric("総合利益度 最大", "—")
-
-# # --- 結果表示（カード） ---
-# st.subheader("結果（カード表示）")
-# render_cards(filtered)
-
-
+# --- サマリー（任意） ---
 st.subheader("サマリー")
 
 # ======================================
@@ -315,18 +299,52 @@ else:
 if filtered_sorted.empty:
     st.info("条件に合う馬がありません。")
 else:
-    # ② st.dataframe をモバイル向けに調整（横幅フィット・インデックス非表示・高さ固定）
+    # 総合利益度 >= 17 の行をハイライト
+    def highlight_row_if_total_ge_17(row):
+        """
+        row: pandas Series（1行）
+        条件を満たす行は背景色を付与（列数分のCSS文字列を返す）
+        """
+        if "総合利益度" in row.index and pd.notna(row["総合利益度"]) and row["総合利益度"] >= 17:
+            return ["background-color: rgba(255, 193, 7, 0.25);"] * len(row)
+        return [""] * len(row)
+    
+    df_table = filtered_sorted[mobile_cols] if mobile_cols else filtered_sorted
+    styler = (
+        df_table.style
+        .format({
+            "総合利益度": "{:.3f}",
+            "総合利益度順位": "{:.0f}",
+        })
+        .apply(highlight_row_if_total_ge_17, axis=1)
+    )
+
+    # ② st.dataframe（モバイル向け設定）は維持しつつ、stylerを渡す
     st.dataframe(
-        filtered_sorted[mobile_cols] if mobile_cols else filtered_sorted,
+        styler,
         use_container_width=True,
         hide_index=True,
         height=420,
     )
 
-    # 詳細は折り畳み（必要なら）
     with st.expander("詳細（全列）"):
+        # 詳細側も同じ条件でハイライト
+        styler_full = (
+            filtered_sorted.style
+            .format({
+                "騎手利益度": "{:.0f}",
+                "騎手利益度順位": "{:.0f}",
+                "種牡馬利益度": "{:.0f}",
+                "種牡馬利益度順位": "{:.0f}",
+                "調教師利益度": "{:.0f}",
+                "調教師利益度順位": "{:.0f}",
+                "総合利益度": "{:.3f}",
+                "総合利益度順位": "{:.0f}",
+            })
+            .apply(highlight_row_if_total_ge_17, axis=1)
+        )
         st.dataframe(
-            filtered_sorted,
+            styler_full,
             use_container_width=True,
             hide_index=True,
             height=520,
