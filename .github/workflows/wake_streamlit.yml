@@ -1,0 +1,17 @@
+name: Wake Streamlit App
+
+on:
+    schedule:
+        # 毎日 07:00 JST に実行
+        # GitHub Actions の cron は UTC なので、JST(UTC+9) -> UTC 22:00
+        - cron: '0 22 * * *'  # 毎日午前7時に実行
+    workflow_dispatch:
+
+jobs:
+    wake:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Curl app URL
+              run: |
+                curl -L -s -o /dev/null -w "%{http_code}\n" "https://myomi-index-app.streamlit.app"
