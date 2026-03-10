@@ -10,8 +10,7 @@ on:
 jobs:
     wake:
         runs-on: ubuntu-latest
-
         steps:
-            - name: Curl app URL
+            - name: Wake Streamlit App (ignore curl errors)
               run: |
-                curl -L -s -o /dev/null -w "%{http_code}\n" "https://myomi-index-app.streamlit.app"
+                curl -L --max-redirs 10 -s -o /dev/null "%{http_code}\n" "https://myomi-index-app.streamlit.app" || true
