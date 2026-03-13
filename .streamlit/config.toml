@@ -5,3 +5,4 @@ headless = true
 [client]
 # サイドバーは小さい画面で自動的に隠れる挙動に任せる（auto相当）
 # ※初期状態は app.py の set_page_config でも設定可能
+showSidebarNavigation = false
