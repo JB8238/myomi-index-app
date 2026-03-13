@@ -1,26 +1,30 @@
 import re
 from pathlib import Path
 from datetime import datetime
-
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-
-DATA_DIR = Path(".","prof_result")   # 指定フォルダ（自動読み込み）
-KAKO_DIR = Path(".","kako_data")   # 過去レースのCSVがあれば（任意）
+DATA_DIR = Path(".", "prof_result")  # 指定フォルダ（自動読み込み）
+KAKO_DIR = Path(".", "kako_data")    # 過去レースのCSVがあれば（任意）
 
 # クエリパラメータから開催/Rを取得
 params = st.query_params
-if "place" in params:
-    st.session_state["place_select"] = params["place"]
-if "race" in params:
-    st.session_state["race_select"] = int(params["race"])
+place = params.get("place")
+race_no = params.get("race")
+
+if place is not None:
+    st.session_state["place_select"] = place
+
+if race_no is not None:
+    st.session_state["race_select"] = int(race_no)
+
+place = st.session_state.get("place_select")
+race_no = st.session_state.get("race_select")
 
 # --------------------------------------------
 # 1) ファイル探索＆最新判定（YYYYMMDD最大）
 # --------------------------------------------
-
 def list_csv_files(data_dir) -> list:
     """指定フォルダ内のCSVファイルをリストアップ"""
     return sorted([p for p in data_dir.rglob("*.csv") if p.is_file()])
@@ -30,7 +34,6 @@ def pick_latest_kako_csv(kako_dir: Path, target_date: int | None = None) -> Path
     files = sorted([p for p in kako_dir.rglob("kako_data_*.csv") if p.is_file()])
     if not files:
         return None
-    # (date_int, path)
     dated = []
     for f in files:
         d = extract_yyyymmdd_from_name(f.name)
@@ -48,34 +51,23 @@ def pick_latest_kako_csv(kako_dir: Path, target_date: int | None = None) -> Path
 
 @st.cache_data(show_spinner="📥 kako_data を読み込んでいます…")
 def load_kako_csv(path_str: str) -> pd.DataFrame:
-    # Windows由来のCSVを想定してcp932優先
     for enc in ("cp932", "utf-8-sig", "utf-8"):
         try:
             return pd.read_csv(path_str, header=None, encoding=enc)
         except UnicodeDecodeError:
             continue
-    # 最後の手段
     return pd.read_csv(path_str, header=None, encoding="cp932", errors="ignore")
 
 def compute_prev_total(df: pd.DataFrame) -> pd.Series:
-    """
-    AI～AK列 = Excel列ベースで 35～37列目（0-based で 34:37）
-    全て空欄なら NaN（後段で「-」表示）
-    """
     block = df.iloc[:, 34:37].apply(pd.to_numeric, errors="coerce")
-    # min_count=1 により全NaNならNaNのまま
     return block.sum(axis=1, min_count=1)
 
 def extract_yyyymmdd_from_name(filename: str) -> int | None:
-    """
-    ファイル名から YYYYMMDD（8桁）を抽出し、妥当な日付のうち最大を返す。
-    例：results_prof_index_20250525.csv -> 20250525
-    """
     candidates = re.findall(r"\d{8}", filename)
     valid = []
     for s in candidates:
         try:
-            datetime.strptime(s, "%Y%m%d")  # 日付として妥当か確認
+            datetime.strptime(s, "%Y%m%d")
             valid.append(int(s))
         except ValueError:
             pass
@@ -89,33 +81,23 @@ def pick_latest_by_filename(files: list[Path]) -> Path | None:
             dated.append((d, f))
     if not dated:
         return None
-    # 日付最大を最新とする（同日の複数ファイルはファイル名で安定化）
     dated.sort(key=lambda x: (x[0], x[1].name))
     return dated[-1][1]
-
 
 # --------------------------------------------
 # 2) CSV読み込み（キャッシュ）
 # --------------------------------------------
 @st.cache_data(show_spinner="📥 CSVを読み込んでいます…")
-
 def load_csv(path_str: str) -> pd.DataFrame:
-    # ※st.cache_data は戻り値をpickle化してキャッシュします（信頼できるデータ前提）[3](https://github.com/streamlit/docs/blob/main/content/develop/api-reference/caching-and-state/cache-data.md)
     df = pd.read_csv(path_str, encoding="cp932")
     return df
 
-
 # ---------------------------
-# 3) 型整形・欠損整備（あなたのCSVに合わせる）
+# 3) 型整形・欠損整備
 # ---------------------------
 def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
-    # 列名の前後空白などがあれば吸収
     df = df.copy()
     df.columns = [c.strip() for c in df.columns]
-
-    # 想定列（あなたのCSVより）[7](https://dev.to/jamesbmour/streamlit-part-6-mastering-layouts-4hci)
-    # 場所, R, 馬番, 馬名, ... 総合利益度, 総合利益度順位
-    # 数値列は空欄があり得るので to_numeric(errors="coerce") でNaN化
     num_cols = [
         "R", "馬番",
         "騎手利益度", "騎手利益度順位",
@@ -126,13 +108,10 @@ def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     for c in num_cols:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    # 表示用：R/馬番は整数に寄せたいがNaNがあるので最後に整形側で対応
     return df
 
-
 # ---------------------------
-# 4) フィルタ（最頻：総合利益度 >= 0）
+# 4) フィルタ
 # ---------------------------
 def apply_filters(
     df: pd.DataFrame,
@@ -143,20 +122,15 @@ def apply_filters(
     include_missing_total: bool = False,
 ) -> pd.DataFrame:
     out = df.copy()
-
     if place and "場所" in out.columns:
         out = out[out["場所"] == place]
-
     if race_no is not None and "R" in out.columns:
         out = out[out["R"] == race_no]
-
-    # 合格条件：総合利益度 >= 0（デフォルト）
     if pass_only and "総合利益度" in out.columns:
         if include_missing_total:
             out = out[(out["総合利益度"].isna()) | (out["総合利益度"] >= pass_threshold)]
         else:
             out = out[out["総合利益度"].notna() & (out["総合利益度"] >= pass_threshold)]
-
     return out
 
 
@@ -244,7 +218,8 @@ selected_file = st.sidebar.selectbox(
     "読み込みCSV（デフォルトは最新）",
     options=files_sorted,
     index=default_idx,
-    format_func=lambda p: p.name
+    format_func=lambda p: p.name,
+    key="file_select",
 )
 
 # 再読み込み（キャッシュクリア）
@@ -274,19 +249,24 @@ races = sorted(df["R"].dropna().unique().astype(int).tolist()) if "R" in df.colu
 with st.sidebar:
     st.header("条件選択")
 
-    place = st.selectbox(
-        "開催（場所）",
-        options=places,
-        index=0 if places else None,
-        key="place_select",
-    ) if places else None
+    # place = st.selectbox(
+    #     "開催（場所）",
+    #     options=places,
+    #     index=0 if places else None,
+    #     key="place_select",
+    # ) if places else None
 
-    race_no = st.selectbox(
-        "R",
-        options=races,
-        index=0 if races else None,
-        key="race_select",
-    ) if races else None
+    # race_no = st.selectbox(
+    #     "R",
+    #     options=races,
+    #     index=0 if races else None,
+    #     key="race_select",
+    # ) if races else None
+
+    st.caption(
+        f"📍 開催: {st.session_state.get('place_select', '-')}"
+        f" / 🏁 R: {st.session_state.get('race_select', '-')}"
+    )
 
     pass_only = st.checkbox(
         "✅ 合格馬だけ（総合利益度 >= 0）",
