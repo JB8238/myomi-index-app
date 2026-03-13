@@ -136,31 +136,40 @@ for col, place in zip(cols, places):
     with col:
         st.markdown(f"## 📍 {place}")
 
-        for r in place_groups[place]:
-            lv = level_map.get((place, int(r)))
-            has17 = high17_map.get((place, int(r)), False)
+        # 1～12Rを「ボタン風」に整列（3列×複数行）
+        race_list = place_groups[place]
+        n_cols = 1
 
-            # 強調判定
-            highlight_fire = (lv in ("Lv4", "Lv5"))
-            highlight_star = (lv == "Lv3" and has17)
+        for i in range(0, len(race_list), n_cols):
+            row = race_list[i:i+n_cols]
+            grid_cols = st.columns(n_cols, gap="small")
 
-            if highlight_fire:
-                icon = "🔥"
-            elif highlight_star:
-                icon = "⭐"
-            else:
-                icon = "📊"
-            
-            lv_text = f" ({lv})" if lv else ""
-            label = f"{icon} {int(r)}R{lv_text}"
+            for c, r in zip(grid_cols, row):
+                with c:
+                    lv = level_map.get((place, int(r)))
+                    has17 = high17_map.get((place, int(r)), False)
 
-            st.page_link(
-                "pages/index_view.py",
-                label=label,
-                icon=None,
-                query_params={"place": place, "race": int(r)},
-                use_container_width=True,
-                help=f"Lv={lv if lv else '-'}, 総合利益度>=17: {'あり' if has17 else 'なし'}",
-            )
+                    # 強調判定
+                    highlight_fire = (lv in ("Lv4", "Lv5"))
+                    highlight_star = (lv == "Lv3" and has17)
+
+                    if highlight_fire:
+                        icon = "🔥"
+                    elif highlight_star:
+                        icon = "⭐"
+                    else:
+                        icon = "📊"
+                    
+                    lv_text = f" {lv}" if lv else ""
+                    label = f"{icon} {int(r)}R{lv_text}"
+
+                    st.page_link(
+                        "pages/index_view.py",
+                        label=label,
+                        icon=None,
+                        query_params={"place": place, "race": int(r)},
+                        use_container_width=True,
+                        help=f"Lv={lv if lv else '-'} / 総合利益度>=17: {'あり' if has17 else 'なし'}",
+                    )
 
         st.divider()
