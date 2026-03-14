@@ -8,6 +8,17 @@ import streamlit as st
 DATA_DIR = Path(".", "prof_result")  # 指定フォルダ（自動読み込み）
 KAKO_DIR = Path(".", "kako_data")    # 過去レースのCSVがあれば（任意）
 
+# --------------------------------------
+# Homeに戻るリンク（ページ上部に表示）
+# --------------------------------------
+st.page_link(
+    "app.py",
+    label="← 開催レース一覧へ戻る",
+    icon="🏠",
+    use_container_width=True,
+)
+st.divider()
+
 # クエリパラメータから開催/Rを取得
 params = st.query_params
 place = params.get("place")
