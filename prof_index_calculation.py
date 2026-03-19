@@ -15,7 +15,7 @@ RESULT_DIR = Path(".", "prof_result", year)
 INDEX_DIR.mkdir(exist_ok=True, parents=True)
 
 INPUT_CSV = f"results_prof_index_{kaisai_date}.csv"
-OUT_DIR = "target_marks_out"
+OUT_DIR = "C:/TFJV/target_marks_out"
 TARGET_DIR = Path(OUT_DIR , year, kaisai_date)
 marks_top5 = ["◎", "○", "▲", "△", "★"]
 
@@ -319,5 +319,5 @@ export("M7", f"work_for_mark7_{kaisai_date}.csv")
 # 検算用（任意）
 df[["場所","R","馬番","馬名","総合利益度","M4","M5","M6","M7"]].to_csv(
     os.path.join(OUT_DIR, "computed_marks_check.csv"),
-    index=False, encoding="utf-8"
+    index=False, encoding="utf-8-sig"
 )
