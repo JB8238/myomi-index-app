@@ -7,6 +7,18 @@ import streamlit as st
 
 DATA_DIR = Path(".", "prof_result")  # 指定フォルダ（自動読み込み）
 KAKO_DIR = Path(".", "kako_data")    # 過去レースのCSVがあれば（任意）
+RETURN_DATA_DIR = Path("C:/TFJV/TXT/data/return_data")
+
+RESULT_COLS = [
+    "人気",
+    "単オッズ",
+    "複勝オッズ下",
+    "上",
+    "単勝",
+    "複勝",
+    "的中種別",
+    "馬連配当",
+]
 
 # --------------------------------------
 # prof_result 全CSVから「前走総合利益度」を引くための履歴テーブル
@@ -141,6 +153,27 @@ def pick_latest_by_filename(files: list[Path]) -> Path | None:
         return None
     dated.sort(key=lambda x: (x[0], x[1].name))
     return dated[-1][1]
+
+def pick_return_data_csv(return_root: Path, target_date: int | None):
+    if target_date is None:
+        return None
+    
+    year = str(target_date)[:4]
+    year_dir = return_root / year
+
+    if not year_dir.exists():
+        return None
+    
+    files = sorted(year_dir.glob("return_data_*.csv"))
+    if not files:
+        return None
+    
+    for f in files:
+        d = extract_yyyymmdd_from_name(f.name)
+        if d == target_date:
+            return f
+    
+    return None
 
 # --------------------------------------------
 # 2) CSV読み込み（キャッシュ）
@@ -300,7 +333,82 @@ if KAKO_DIR.exists():
     if kako_path is not None:
         df_kako = load_kako_csv(str(kako_path))
 
-# # --- Home上部：クイック操作 ---
+# --- return_data 読み込み（結果CSV） ---
+df_return = None
+return_path = pick_return_data_csv(
+    RETURN_DATA_DIR, target_date=race_date
+)
+
+if return_path is not None:
+    df_return = pd.read_csv(return_path, encoding="cp932")
+
+    # 列名の正規化（return_data は「Ｒ」全角の可能性があるため）
+    df_return.columns = [str(c).strip() for c in df_return.columns]
+    rename_map = {"Ｒ": "R"}
+    df_return.rename(columns=rename_map, inplace=True)
+
+def normalize_place(s):
+    if pd.isna(s):
+        return s
+    return (
+        str(s).replace("\u3000", " ").strip()
+    )
+
+if df_return is not None:
+    # ---- JOINキーの方を明示的にそろえる ----
+    if "場所" in df_return.columns:
+        df_return["場所"] = df_return["場所"].apply(normalize_place)
+    if "R" in df_return.columns:
+        df_return["R"] = pd.to_numeric(df_return["R"], errors="coerce")
+    if "馬番" in df_return.columns:
+        df_return["馬番"] = pd.to_numeric(df_return["馬番"], errors="coerce")
+        
+    # df 側もそろえる
+    if "場所" in df.columns:
+        df["場所"] = df["場所"].apply(normalize_place)
+    if "R" in df.columns:
+        df["R"] = pd.to_numeric(df["R"], errors="coerce")
+    if "馬番" in df.columns:
+        df["馬番"] = pd.to_numeric(df["馬番"], errors="coerce")
+    
+    df = df.merge(
+        df_return,
+        on=["場所", "R", "馬番"],
+        how="left",
+        suffixes=("", "_result")
+    )
+
+    # ---- 着順は数値比較するため数値化 ----
+    if "着" in df.columns:
+        df["着"] = pd.to_numeric(df["着"], errors="coerce")
+    
+    # ---- return_data の着順を優先して統合 ----
+    if "着_result" in df.columns:
+        df["着"] = df["着_result"].combine_first(df.get("着"))
+    
+    if "単勝" in df.columns:
+        df["単勝"] = pd.to_numeric(df["単勝"], errors="coerce")
+        df["単勝的中"] = df["単勝"] > 0
+    else:
+        df["単勝的中"] = False
+    
+    if "複勝" in df.columns:
+        df["複勝"] = pd.to_numeric(df["複勝"], errors="coerce")
+        df["複勝的中"] = df["複勝"] > 0
+    else:
+        df["複勝的中"] = False
+    
+    # 視認性用（任意）
+    def _hit_label(row):
+        if row.get("単勝的中", False):
+            return "単勝"
+        if row.get("複勝的中", False):
+            return "複勝"
+        return "-"
+    
+    df["的中種別"] = df.apply(_hit_label, axis=1)
+
+# --- Home上部：クイック操作 ---
 places = sorted(df["場所"].dropna().unique().tolist()) if "場所" in df.columns else []
 races = sorted(df["R"].dropna().unique().astype(int).tolist()) if "R" in df.columns else []
 
@@ -324,6 +432,11 @@ with st.sidebar:
         key="include_missing",
     )
 
+    show_result = st.checkbox(
+        "📊 結果を表示", value=True,
+        key="show_result",
+    )
+
 filtered = apply_filters(
     df=df,
     place=place,
@@ -332,22 +445,6 @@ filtered = apply_filters(
     pass_threshold=0.0,
     include_missing_total=include_missing
 )
-
-# # =========================================
-# # 前走の総合妙味度（kako_data AI～AK列）
-# # =========================================
-# if df_kako is not None:
-#     df_kako = df_kako.copy()
-#     df_kako["前走総合利益度"] = compute_prev_total(df_kako)
-
-#     # 馬番（O列=14）・馬名（V列=21）で突合
-#     filtered = filtered.merge(
-#         df_kako[[14, 21, "前走総合利益度"]],
-#         left_on=["馬番", "馬名"],
-#         right_on=[14, 21],
-#         how="left",
-#     )
-#     filtered.drop(columns=[14, 21], inplace=True)
 
 # =========================================
 # 前走総合利益度：prof_result_*.csv から参照（履歴統合）
@@ -521,4 +618,59 @@ else:
             use_container_width=True,
             hide_index=True,
             height=520,
+        )
+
+# ======================================
+# レース結果ビュー
+# ======================================
+if st.session_state.get("show_result", False):
+    st.subheader("📊 レース結果（オッズ・着順）")
+
+    # 表示可能な結果列だけ抽出
+    result_cols = [c for c in RESULT_COLS if c in filtered.columns]
+
+    if "単勝" in filtered.columns:
+        hit = filtered[filtered["単勝"] > 0]
+        st.metric("単勝 的中数", f"{len(hit)}頭")
+    
+    if "複勝" in filtered.columns:
+        place_hit = filtered[filtered["複勝"] > 0]
+        st.metric("複勝 的中数", f"{len(place_hit)}頭")
+    
+    if "単勝" in filtered.columns:
+        st.metric("単勝 回収合計", int(filtered["単勝"].sum()))
+
+    if len(result_cols) == 0:
+        st.info("このCSVには結果データが含まれていません。")
+    else:
+        base_cols = [c for c in ["馬番", "馬名"] if c in filtered.columns]
+        result_df = filtered[base_cols + result_cols].copy()
+
+        # 並び順：人気（低いほど上） → 単オッズ（低いほど上）
+        if "人気" in result_df.columns:
+            result_df["人気"] = pd.to_numeric(result_df["人気"], errors="coerce")
+        if "単オッズ" in result_df.columns:
+            result_df["単オッズ"] = pd.to_numeric(result_df["単オッズ"], errors="coerce")
+        if "人気" in result_df.columns:
+            result_df = result_df.sort_values(["人気", "単オッズ"], na_position="last")
+
+        
+        styler = (
+            result_df.style
+            .format({
+                "人気": "{:.0f}",
+                "単オッズ": "{:.1f}",
+                "複勝オッズ下": "{:.1f}",
+                "上": "{:.1f}",
+                "単勝": "{:.0f}",
+                "複勝": "{:.0f}",
+                "馬連配当": "{:.0f}",
+            }, na_rep="-")
+        )
+
+        st.dataframe(
+            styler,
+            use_container_width=True,
+            hide_index=True,
+            height=420,
         )
