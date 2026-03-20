@@ -45,10 +45,10 @@ def main():
 
     zensou_df_pre = zensou_df.iloc[:, [8, 21, 25, 30, 43, 64]]
     if data_pattern == 1:
-        base_df_pre = base_df.iloc[:, [3, 4, 5, 7, 8, 9, 14, 21, 24, 26, 33]]
+        base_df_pre = base_df.iloc[:, [3, 4, 5, 7, 8, 9, 11, 14, 21, 24, 26, 33]]
         peds_df_pre = peds_df.iloc[:, [21, 32]]
     elif data_pattern == 2:
-        base_df_pre = base_df.iloc[:, [3, 4, 5, 7, 8, 9, 14, 21, 24, 26, 31]]
+        base_df_pre = base_df.iloc[:, [3, 4, 5, 7, 8, 9, 11, 14, 21, 24, 26, 31]]
         peds_df_pre = peds_df.iloc[:, [21, 30]]
     else:
         raise ValueError("不正な値が入力されています。'1'か'2'を入力してください。")
@@ -78,9 +78,6 @@ def main():
     zensou_df_pre[int_cols] = zensou_df_pre[int_cols].astype("float")
 
     # 中○週 → 数値
-    # zensou_df_pre["前走間隔"] = zensou_df_pre["前走間隔"] - 1
-    # zensou_df_pre["前-2走前間隔"] = zensou_df_pre["前-2走前間隔"] - 1
-    # zensou_df_pre["2-3走前間隔"] = zensou_df_pre["2-3走前間隔"] - 1
     cols = ["前走間隔", "前-2走前間隔", "2-3走前間隔"]
     for c in cols:
         zensou_df_pre[c] = pd.to_numeric(zensou_df_pre[c], errors="coerce")
@@ -139,6 +136,7 @@ def main():
         "種別",
         "距離",
         "馬場状態",
+        "レースレベル",
         "馬番",
         "馬名",
         "年齢",
