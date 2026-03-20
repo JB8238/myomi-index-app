@@ -14,6 +14,13 @@ st.set_page_config(
     layout="wide",
 )
 
+st.page_link(
+    "pages/analysis.py",
+    label="📈 指数分析ページ",
+    icon="📈",
+    use_container_width=True,
+)
+
 st.title("🏇 開催レース一覧")
 
 # -----------------------------------
@@ -40,35 +47,6 @@ def pick_latest(files):
             dated.append((d, f))
     dated.sort()
     return dated[-1][1] if dated else None
-
-# def pick_latest_kako_csv(kako_dir: Path, target_date: str | None = None) -> Path | None:
-#     """kako_data_YYYYMMDD.csv を探し、target_date一致を優先、なければ日付最大"""
-#     files = sorted([p for p in kako_dir.rglob("kako_data_*.csv") if p.is_file()])
-#     if not files:
-#         return None
-#     dated = []
-#     for f in files:
-#         d = extract_yyyymmdd_from_name(f.name)
-#         if d:
-#             dated.append((d, f))
-#     if not dated:
-#         return None
-#     if target_date is not None:
-#         same = [t for t in dated if t[0] == target_date]
-#         if same:
-#             same.sort(key=lambda x: x[1].name)
-#             return same[-1][1]
-#     dated.sort(key=lambda x: (x[0], x[1].name))
-#     return dated[-1][1]
-
-# @st.cache_data(show_spinner="📥 kako_data を読み込んでいます…")
-# def load_kako_csv(path_str: str) -> pd.DataFrame:
-#     for enc in ("cp932", "utf-8-sig", "utf-8"):
-#         try:
-#             return pd.read_csv(path_str, header=None, encoding=enc)
-#         except UnicodeDecodeError:
-#             continue
-#     return pd.read_csv(path_str, header=None, encoding="cp932", errors="ignore")
 
 @st.cache_data(show_spinner="📘 レースレベル (preprocessed_data) を読み込んでいます…")
 def load_race_level_map(prep_root: Path, target_date: str | None) -> dict:
@@ -147,24 +125,6 @@ high17_map = (
     .apply(lambda s: bool((s >= 17).any()))
     .to_dict()
 ) if "総合利益度" in df_work.columns else {}
-
-# # kako_data 側: 場所(D=3)×R(E=4)ごとにレースレベル(L=11)を取得
-# level_map = {}
-# if KAKO_DIR.exists():
-#     kako_path = pick_latest_kako_csv(KAKO_DIR, target_date=kaisai_date)
-#     if kako_path is not None:
-#         df_kako = load_kako_csv(str(kako_path))
-#         # D列=3, E列=4, L列=11（ヘッダなし）
-#         tmp = df_kako[[3, 4, 11]].copy() if df_kako.shape[1] >= 12 else None
-#         if tmp is not None:
-#             tmp.columns = ["場所", "R", "Lv"]
-#             tmp["R"] = pd.to_numeric(tmp["R"], errors="coerce")
-#             tmp["Lv"] = tmp["Lv"].astype(str).str.strip()
-#             # 場所×Rごとの代表Lv（複数行ある場合は最頻）
-#             for (p, r), g in tmp.dropna(subset=["R"]).groupby(["場所", "R"]):
-#                 lv_series = g["Lv"].dropna()
-#                 if not lv_series.empty:
-#                     level_map[(p, int(r))] = lv_series.mode().iloc[0]
 
 st.info("強調ルール：🔥 Lv4/Lv5  |  ⭐ Lv3 かつ 総合利益度>=17の馬がいるレース")
 
