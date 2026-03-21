@@ -7,7 +7,7 @@ import streamlit as st
 
 DATA_DIR = Path(".", "prof_result")  # 指定フォルダ（自動読み込み）
 KAKO_DIR = Path(".", "kako_data")    # 過去レースのCSVがあれば（任意）
-RETURN_DATA_DIR = Path("C:/TFJV/TXT/data/return_data")
+MERGED_RETURN_PATH = Path("./data/return_data_merged.csv")
 
 RESULT_COLS = [
     "人気",
@@ -153,27 +153,6 @@ def pick_latest_by_filename(files: list[Path]) -> Path | None:
         return None
     dated.sort(key=lambda x: (x[0], x[1].name))
     return dated[-1][1]
-
-def pick_return_data_csv(return_root: Path, target_date: int | None):
-    if target_date is None:
-        return None
-    
-    year = str(target_date)[:4]
-    year_dir = return_root / year
-
-    if not year_dir.exists():
-        return None
-    
-    files = sorted(year_dir.glob("return_data_*.csv"))
-    if not files:
-        return None
-    
-    for f in files:
-        d = extract_yyyymmdd_from_name(f.name)
-        if d == target_date:
-            return f
-    
-    return None
 
 # --------------------------------------------
 # 2) CSV読み込み（キャッシュ）
@@ -349,12 +328,8 @@ if KAKO_DIR.exists():
 
 # --- return_data 読み込み（結果CSV） ---
 df_return = None
-return_path = pick_return_data_csv(
-    RETURN_DATA_DIR, target_date=race_date
-)
-
-if return_path is not None:
-    df_return = pd.read_csv(return_path, encoding="cp932")
+if MERGED_RETURN_PATH.exists():
+    df_return = pd.read_csv(MERGED_RETURN_PATH, encoding="utf-8-sig")
 
     # 列名の正規化（return_data は「Ｒ」全角の可能性があるため）
     df_return.columns = [str(c).strip() for c in df_return.columns]
@@ -385,12 +360,15 @@ if df_return is not None:
     if "馬番" in df.columns:
         df["馬番"] = pd.to_numeric(df["馬番"], errors="coerce")
     
-    df = df.merge(
-        df_return,
-        on=["場所", "R", "馬番"],
-        how="left",
-        suffixes=("", "_result")
-    )
+    if df_return is not None:
+        df_ret_day = df_return[df_return["開催日"] == race_date].copy()
+
+        df = df.merge(
+            df_ret_day,
+            on=["場所", "R", "馬番"],
+            how="left",
+            validate="m:1"
+        )
 
     # ---- 着順は数値比較するため数値化 ----
     if "着" in df.columns:

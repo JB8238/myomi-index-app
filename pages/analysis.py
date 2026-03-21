@@ -10,14 +10,7 @@ from datetime import datetime
 # 設定
 # =========================================================
 DATA_DIR = Path(".", "prof_result")
-
-# return_data の置き場所（ローカル優先）
-# 例：C:\TFJV\TXT\data\return_data\YYYY\return_data_YYYYMMDD.csv
-RETURN_DATA_ROOT = Path(r"C:\TFJV\TXT\data\return_data")
-
-# ローカルが無い環境向けフォールバック（任意）
-# 例：プロジェクト直下に return_data/YYYY/return_data_YYYYMMDD.csv を置く場合
-RETURN_DATA_FALLBACK = Path(".", "return_data")
+MERGED_RETURN_PATH = Path("./data/return_data_merged.csv")
 
 RESULT_COLS = [
     "人気",
@@ -291,10 +284,7 @@ with st.sidebar:
 
     only_pass = st.checkbox("合格馬のみ（総合利益度>=0）", value=False)
 
-# return_data root 決定
-return_root = RETURN_DATA_ROOT if RETURN_DATA_ROOT.exists() else RETURN_DATA_FALLBACK
-
-st.caption(f"return_data 参照ルート: {str(return_root)}")
+st.caption(f"return_data 参照ルート: {str(MERGED_RETURN_PATH)}")
 
 # =========================================================
 # 統合データセット構築
@@ -310,26 +300,21 @@ for d in target_dates:
     df_prof = load_prof(selected_file)
     df_prof["開催日"] = d
 
-    # return_data を同日で引く
-    ret_path = pick_return_data_csv(return_root, d)
-    if ret_path is None:
-        missing_return.append(d)
-        df_all = df_prof
+    if MERGED_RETURN_PATH.exists():
+        df_ret = pd.read_csv(MERGED_RETURN_PATH, encoding="utf-8-sig")
+        df_ret = df_ret[df_ret["開催日"] == d]
     else:
-        df_ret = load_return(ret_path)
-        df_ret["開催日"] = d
-
-        # 同日内の join（キー：場所, R, 馬番）
-        # 列衝突を避けるため、return側のキー以外のみを持つ
-        ret_payload_cols = [c for c in RESULT_COLS if c in df_ret.columns]
-        df_ret_small = df_ret[["場所", "R", "馬番"] + ret_payload_cols].copy()
-
+        df_ret = None
+    
+    if df_ret is not None and not df_ret.empty:
         df_all = df_prof.merge(
-            df_ret_small,
+            df_ret,
             on=["場所", "R", "馬番"],
             how="left",
-            validate="m:1",  # 右側が重複してたら早期に気づける
+            validate="m:1"
         )
+    else:
+        df_all = df_prof
 
     df_all = add_derived_columns(df_all)
 
