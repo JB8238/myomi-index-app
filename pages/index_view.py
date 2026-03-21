@@ -297,6 +297,20 @@ if latest is None:
     st.error("prof_result/ に YYYYMMDD を含むCSVが見つかりません。")
     st.stop()
 
+qp = st.query_params
+csv_name = qp.get("csv")
+files = list_csv_files(DATA_DIR)
+selected_file = None
+if csv_name:
+    for p in files:
+        if p.name == csv_name:
+            selected_file = p
+            break
+if selected_file is None:
+    selected_file = st.session_state.get("selected_prof_csv")
+if selected_file is None:
+    selected_file = pick_latest_by_filename(files)
+
 # 日付降順で並べて選べるように
 def file_sort_key(p: Path):
     d = extract_yyyymmdd_from_name(p.name) or 0

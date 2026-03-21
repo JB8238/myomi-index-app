@@ -14,13 +14,6 @@ st.set_page_config(
     layout="wide",
 )
 
-st.page_link(
-    "pages/analysis.py",
-    label="📈 指数分析ページ",
-    icon="📈",
-    use_container_width=True,
-)
-
 st.title("🏇 開催レース一覧")
 
 # -----------------------------------
@@ -39,7 +32,7 @@ def extract_yyyymmdd_from_name(filename: str):
 def list_csv_files():
     return sorted([p for p in DATA_DIR.rglob("*.csv") if p.is_file()])
 
-def pick_latest(files):
+def pick_latest_by_filename(files):
     dated = []
     for f in files:
         d = extract_yyyymmdd_from_name(f.name)
@@ -95,15 +88,18 @@ def load_race_level_map(prep_root: Path, target_date: str | None) -> dict:
 # データ読み込み
 # -----------------------------------
 files = list_csv_files()
-latest = pick_latest(files)
 
-if latest is None:
+# サイドバーで選択されたCSVを使用（なければ最新）
+selected_file = st.session_state.get("selected_prof_csv")
+if selected_file is None:
+    selected_file = pick_latest_by_filename(files)
+df = pd.read_csv(selected_file, encoding="cp932")
+kaisai_date = extract_yyyymmdd_from_name(selected_file.name)
+
+if selected_file is None:
     st.error("prof_result にCSVが見つかりません")
     st.stop()
 
-df = pd.read_csv(latest, encoding="cp932")
-
-kaisai_date = extract_yyyymmdd_from_name(latest.name)
 
 # レースレベル（preprocessed_data 由来）
 level_map = load_race_level_map(PREP_DIR, kaisai_date)
@@ -112,9 +108,37 @@ if not {"場所", "R"}.issubset(df.columns):
     st.error("CSVに「場所」「R」列が必要です")
     st.stop()
 
+with st.sidebar:
+    st.header("データ設定")
+
+    files = list_csv_files()
+    if not files:
+        st.error("prof_result にCSVが見つかりません。")
+        st.stop()
+
+    files_sorted = sorted(
+        files,
+        key=lambda p: (extract_yyyymmdd_from_name(p.name) or 0, p.name),
+        reverse=True,
+    )
+    latest = pick_latest_by_filename(files_sorted)
+
+    selected_file = st.selectbox(
+        "読み込みCSV（デフォルトは最新）",
+        options=files_sorted,
+        index=files_sorted.index(latest),
+        format_func=lambda p: p.name,
+        key="home_file_select",
+    )
+
+    st.session_state["selected_prof_csv"] = selected_file
+
+    if st.button("🔄 再読み込み（キャッシュクリア）"):
+        st.cache_data.clear()
+
 # 最新ファイルの日付（kako_dataの一致に使う）
 kaisai_date = extract_yyyymmdd_from_name(latest.name)
-st.caption(f"参照ファイル: {latest.name} （開催日: {kaisai_date if kaisai_date else '-'}）")
+st.caption(f"参照ファイル: {selected_file.name} （開催日: {kaisai_date if kaisai_date else '-'}）")
 
 # prof_result 側: 場所×Rごとに「総合利益度>=17がいるか」を判定
 df_work = df.copy()
@@ -140,6 +164,14 @@ places = list(place_groups.keys())
 
 # 開催場の数だけ横カラムを作る
 cols = st.columns(len(places), gap="large")
+
+st.page_link(
+    "pages/analysis.py",
+    label="指数分析ページ",
+    icon="📈",
+    use_container_width=True,
+    query_params={"csv": selected_file.name}
+)
 
 for col, place in zip(cols, places):
     with col:

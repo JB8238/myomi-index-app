@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 from datetime import datetime
 
+
 # =========================================================
 # 設定
 # =========================================================
@@ -235,6 +236,23 @@ def build_prof_history(data_dir: Path) -> pd.DataFrame:
     hist = hist[hist["馬名"].notna() & (hist["馬名"].astype(str).str.strip() != "")]
     return hist
 
+# -----------------------------------
+# CSV選択（query_params → session_state → latest）
+# -----------------------------------
+qp = st.query_params
+csv_name = qp.get("csv")
+files = list_csv_files(DATA_DIR)
+selected_file = None
+if csv_name:
+    for p in files:
+        if p.name == csv_name:
+            selected_file = p
+            break
+if selected_file is None:
+    selected_file = st.session_state.get("selected_prof_csv")
+if selected_file is None:
+    selected_file = pick_latest_by_filename(files)
+
 # =========================================================
 # データ読み込み（prof_result）＋開催日選択
 # =========================================================
@@ -250,6 +268,13 @@ dated_files.sort(key=lambda x: x[0])
 available_dates = [d for d, _ in dated_files]
 latest_date = available_dates[-1]
 latest_prof_path = dict(dated_files)[latest_date]
+
+selected_file = st.session_state.get("selected_prof_csv")
+
+if selected_file is not None:
+    prof_path = selected_file
+else:
+    prof_path = pick_latest_by_filename(list_csv_files(DATA_DIR))
 
 with st.sidebar:
     st.header("分析対象")
@@ -282,7 +307,7 @@ for d in target_dates:
     if prof_path is None:
         continue
 
-    df_prof = load_prof(prof_path)
+    df_prof = load_prof(selected_file)
     df_prof["開催日"] = d
 
     # return_data を同日で引く
