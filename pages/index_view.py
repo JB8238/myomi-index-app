@@ -7,6 +7,7 @@ import streamlit as st
 
 DATA_DIR = Path(".", "prof_result")  # 指定フォルダ（自動読み込み）
 KAKO_DIR = Path(".", "kako_data")    # 過去レースのCSVがあれば（任意）
+PREP_DIR = Path(".", "data")
 MERGED_RETURN_PATH = Path("./data/return_data_merged.csv")
 
 RESULT_COLS = [
@@ -66,6 +67,40 @@ def build_prof_history(data_dir_str: str) -> pd.DataFrame:
     # 馬名が空の行は除外
     hist = hist[hist["馬名"].notna() & (hist["馬名"].astype(str).str.strip() != "")]
     return hist
+
+@st.cache_data(show_spinner="📥 preprocessed_data 読み込み中…")
+def load_preprocessed_for_race(prep_dir: Path, target_date: int) -> pd.DataFrame:
+    files = sorted(prep_dir.rglob("preprocessed_data_*.csv"))
+    rows = []
+
+    for p in files:
+        d = extract_yyyymmdd_from_name(p.name)
+        if d != target_date:
+            continue
+
+        df0 = pd.read_csv(p, encoding="utf-8")
+        df0.columns = [str(c).strip() for c in df0.columns]
+
+        if not {"場所", "R", "レースレベル"}.issubset(df0.columns):
+            continue
+
+        tmp = df0[["場所", "R", "レースレベル"]].copy()
+        tmp["開催日"] = d
+
+        tmp["場所"] = (
+            tmp["場所"].astype(str)
+            .str.replace("\u3000", " ")
+            .str.strip()
+        )
+        tmp["R"] = pd.to_numeric(tmp["R"], errors="coerce")
+        tmp["レースレベル"] = tmp["レースレベル"].astype(str).str.strip()
+
+        rows.append(tmp)
+
+    if not rows:
+        return pd.DataFrame(columns=["開催日", "場所", "R", "レースレベル"])
+
+    return pd.concat(rows, ignore_index=True)
 
 # --------------------------------------
 # Homeに戻るリンク（ページ上部に表示）
@@ -473,30 +508,20 @@ if "総合利益度" in filtered.columns:
     filtered["利益度上昇値"] = cur_int - prev
 
 # =========================================
-# レースレベル（L列）をサマリに出すために抽出
+# レースレベル（preprocessed_data から取得）
 # =========================================
 race_level = None
-if df_kako is not None:
-    df_race = df_kako.copy()
 
-    # 開催場所（D列）
-    if place is not None:
-        df_race = df_race[df_race.iloc[:, 3] == place]
-    
-    # レース番号（E列）
-    if race_no is not None:
-        df_race = df_race[pd.to_numeric(df_race.iloc[:, 4], errors="coerce") == race_no]
-    
-    # L列 = レースレベル
-    if len(df_race) > 0:
-        lvl = (
-            df_race.iloc[:, 11]
-            .dropna()
-            .astype(str)
-            .str.strip()
-        )
-        if not lvl.empty:
-            race_level = lvl.mode().iloc[0]
+if race_date is not None and place is not None and race_no is not None:
+    df_prep = load_preprocessed_for_race(PREP_DIR, race_date)
+
+    df_race = df_prep[
+        (df_prep["場所"] == place) &
+        (df_prep["R"] == race_no)
+    ]
+
+    if not df_race.empty:
+        race_level = df_race["レースレベル"].mode().iloc[0]
 
 st.metric("レースレベル", race_level if race_level else "—")
 
