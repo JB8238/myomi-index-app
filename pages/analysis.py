@@ -205,11 +205,37 @@ dated.sort()
 available_dates = [d for d, _ in dated]
 
 with st.sidebar:
-    mode = st.radio("対象期間", ["最新日だけ", "日付を選ぶ", "全期間"], index=0)
+    mode = st.radio(
+        "対象期間",
+        ["最新日だけ", "日付を選ぶ", "期間指定", "全期間"],
+        index=0
+    )
     if mode == "最新日だけ":
         target_dates = [available_dates[-1]]
     elif mode == "日付を選ぶ":
-        target_dates = st.multiselect("開催日", available_dates, default=[available_dates[-1]])
+        target_dates = st.multiselect(
+            "開催日", available_dates,
+            default=[available_dates[-1]]
+        )
+    elif mode == "期間指定":
+        date_objs = [
+            datetime.strptime(str(d), "%Y%m%d").date()
+            for d in available_dates
+        ]
+        start_date, end_date = st.date_input(
+            "対象期間（開始～終了）",
+            value=(min(date_objs), max(date_objs)),
+            min_value=min(date_objs),
+            max_value=max(date_objs),
+        )
+        target_dates = [
+            d for d in available_dates
+            if start_date
+            <= datetime.strptime(str(d), "%Y%m%d").date()
+            <= end_date
+        ]
+        if not target_dates:
+            st.warning("指定期間に該当する開催日がありません。")
     else:
         target_dates = available_dates
 
@@ -281,6 +307,41 @@ with st.sidebar:
     else:
         selected_lv = []
         st.caption("レースレベル情報がありません")
+
+    # 買い条件 抽出パラメータ（UI）
+    st.subheader("買い条件 抽出パラメータ")
+
+    st.markdown("**単勝条件**")
+    win_min_roi = st.slider(
+        "単勝ROI 下限 (%)",
+        min_value=90.0,
+        max_value=150.0,
+        value=110.0,
+        step=1.0,
+    )
+    win_min_n = st.slider(
+        "単勝 件数 下限",
+        min_value=3,
+        max_value=50,
+        value=10,
+        step=1,
+    )
+
+    st.markdown("**複勝条件**")
+    plc_min_roi = st.slider(
+        "複勝ROI 下限 (%)",
+        min_value=90.0,
+        max_value=130.0,
+        value=105.0,
+        step=1.0,
+    )
+    plc_min_n = st.slider(
+        "複勝 件数 下限",
+        min_value=3,
+        max_value=50,
+        value=10,
+        step=1,
+    )
 
 # =========================================================
 # 分析表示（回収率/的中率）
@@ -499,6 +560,135 @@ else:
 
     st.caption("※ サンプル数が少ないセル（件数<5）は薄く表示します。")
     st.dataframe(sty, use_container_width=True, height=480)
+
+# =========================================================
+# 買い条件自動抽出
+# =========================================================
+def build_condition_cells(df_hm: pd.DataFrame) -> pd.DataFrame:
+    x = df_hm.copy()
+
+    # ROI計算用（はずれ=0）
+    x["単勝_回収"] = pd.to_numeric(x.get("単勝"), errors="coerce").fillna(0)
+    x["複勝_回収"] = pd.to_numeric(x.get("複勝"), errors="coerce").fillna(0)
+
+    agg = (
+        x.groupby(
+            ["レースレベル", "上昇値区分", "人気乖離区分"],
+            observed=True
+        )
+        .agg(
+            件数=("馬番", "count"),
+            単勝ROI=("単勝_回収", "mean"),
+            単勝的中率=("単勝的中", "mean"),
+            複勝ROI=("複勝_回収", "mean"),
+            複勝的中率=("複勝的中", "mean"),
+        )
+        .reset_index()
+    )
+
+    agg["単勝的中率"] = agg["単勝的中率"] * 100
+    agg["複勝的中率"] = agg["複勝的中率"] * 100
+    return agg
+
+def extract_buy_conditions_win(
+    cells: pd.DataFrame,
+    min_roi: float = 110.0,
+    min_n: int = 10
+) -> pd.DataFrame:
+    out = cells[
+        (cells["単勝ROI"] >= min_roi) &
+        (cells["件数"] >= min_n)
+    ].copy()
+
+    # Lv → 上昇値 → 人気乖離 → ROI の順で見やすく
+    out = out.sort_values(
+        ["レースレベル", "単勝ROI", "件数"],
+        ascending=[True, False, False]
+    )
+
+    return out
+
+def extract_buy_conditions_place(
+    cells: pd.DataFrame,
+    min_roi: float = 105.0,
+    min_n: int = 10
+) -> pd.DataFrame:
+    out = cells[
+        (cells["複勝ROI"] >= min_roi) &
+        (cells["件数"] >= min_n)
+    ].copy()
+
+    # Lv → 上昇値 → 人気乖離 → ROI の順で見やすく
+    out = out.sort_values(
+        ["レースレベル", "複勝ROI", "件数"],
+        ascending=[True, False, False]
+    )
+
+    return out
+
+st.divider()
+st.header("④ Lv別・自動抽出された買い条件")
+
+cells = build_condition_cells(df_hm)
+
+# ---- 単勝条件 ----
+st.subheader("✅ 単勝・買い条件")
+buy_win = extract_buy_conditions_win(
+    cells,
+    min_roi=win_min_roi,
+    min_n=win_min_n
+)
+
+if buy_win.empty:
+    st.info("単勝の買い条件は見つかりませんでした。")
+else:
+    st.dataframe(
+        buy_win[[
+            "レースレベル",
+            "上昇値区分",
+            "人気乖離区分",
+            "件数",
+            "単勝ROI",
+            "単勝的中率",
+        ]].style.format({
+            "単勝ROI": "{:.1f}%",
+            "単勝的中率": "{:.1f}%",
+        }),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+# ---- 複勝条件 ----
+st.subheader("✅ 複勝・買い条件")
+buy_place = extract_buy_conditions_place(
+    cells,
+    min_roi=plc_min_roi,
+    min_n=plc_min_n
+)
+
+if buy_place.empty:
+    st.info("複勝の買い条件は見つかりませんでした。")
+else:
+    st.dataframe(
+        buy_place[[
+            "レースレベル",
+            "上昇値区分",
+            "人気乖離区分",
+            "件数",
+            "複勝ROI",
+            "複勝的中率",
+        ]].style.format({
+            "複勝ROI": "{:.1f}%",
+            "複勝的中率": "{:.1f}%",
+        }),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        f"※ 単勝条件：ROI ≧ {win_min_roi:.0f}% / 件数 ≧ {win_min_n}、"
+        f"複勝条件：ROI ≧ {plc_min_roi:.0f}% / 件数 ≧ {plc_min_n}"
+    )
 
 # =========================================================
 # デバッグ表示

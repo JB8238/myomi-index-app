@@ -117,15 +117,18 @@ st.divider()
 params = st.query_params
 place = params.get("place")
 race_no = params.get("race")
+date_param = params.get("date")
 
 if place is not None:
     st.session_state["place_select"] = place
-
 if race_no is not None:
     st.session_state["race_select"] = int(race_no)
+if date_param is not None:
+    st.session_state["date_select"] = int(date_param)
 
 place = st.session_state.get("place_select")
 race_no = st.session_state.get("race_select")
+race_date = st.session_state.get("date_select")
 
 # --------------------------------------------
 # 1) ファイル探索＆最新判定（YYYYMMDD最大）
@@ -305,8 +308,15 @@ st.caption("prof_result/フォルダ内のCSVを自動読み込み（ファイ�
 st.sidebar.header("データ設定")
 
 files = list_csv_files(DATA_DIR)
-latest = pick_latest_by_filename(files)
-
+if race_date is not None:
+    files_same_date = [
+        p for p in files
+        if extract_yyyymmdd_from_name(p.name) == race_date
+    ]
+    latest = pick_latest_by_filename(files_same_date) if files_same_date else None
+else:
+    latest = pick_latest_by_filename(files)
+    
 if latest is None:
     st.error("prof_result/ に YYYYMMDD を含むCSVが見つかりません。")
     st.stop()

@@ -4,8 +4,8 @@ from pathlib import Path
 from datetime import datetime
 import re
 
-DATA_DIR = Path(".", "prof_result")
-KAKO_DIR = Path(".", "kako_data")
+DATA_DIR = Path("prof_result")
+KAKO_DIR = Path("kako_data")
 PREP_DIR = Path("data")
 
 st.set_page_config(
@@ -137,7 +137,7 @@ with st.sidebar:
         st.cache_data.clear()
 
 # 最新ファイルの日付（kako_dataの一致に使う）
-kaisai_date = extract_yyyymmdd_from_name(latest.name)
+kaisai_date = extract_yyyymmdd_from_name(selected_file.name)
 st.caption(f"参照ファイル: {selected_file.name} （開催日: {kaisai_date if kaisai_date else '-'}）")
 
 # prof_result 側: 場所×Rごとに「総合利益度>=17がいるか」を判定
@@ -208,7 +208,11 @@ for col, place in zip(cols, places):
                         "pages/index_view.py",
                         label=label,
                         icon=None,
-                        query_params={"place": place, "race": int(r)},
+                        query_params={
+                            "place": place,
+                            "race": int(r),
+                            "date": kaisai_date,
+                        },
                         use_container_width=True,
                         help=f"Lv={lv if lv else '-'} / 総合利益度>=17: {'あり' if has17 else 'なし'}",
                     )
