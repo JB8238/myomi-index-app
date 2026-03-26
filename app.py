@@ -14,6 +14,9 @@ st.set_page_config(
     layout="wide",
 )
 
+if "selected_prof_csv" not in st.session_state:
+    st.session_state["selected_prof_csv"] = None
+
 st.title("🏇 開催レース一覧")
 
 # -----------------------------------
@@ -123,15 +126,23 @@ with st.sidebar:
     )
     latest = pick_latest_by_filename(files_sorted)
 
+    def on_change_selected_file():
+        st.session_state["selected_prof_csv"] = st.session_state["home_file_select"]
+
     selected_file = st.selectbox(
         "読み込みCSV（デフォルトは最新）",
         options=files_sorted,
         index=files_sorted.index(latest),
         format_func=lambda p: p.name,
         key="home_file_select",
+        on_change=on_change_selected_file,
     )
 
-    st.session_state["selected_prof_csv"] = selected_file
+    # 初回起動時の None ガード
+    if st.session_state["selected_prof_csv"] is None:
+        st.session_state["selected_prof_csv"] = latest
+
+    selected_file = st.session_state["selected_prof_csv"]
 
     if st.button("🔄 再読み込み（キャッシュクリア）"):
         st.cache_data.clear()

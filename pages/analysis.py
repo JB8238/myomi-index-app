@@ -8,9 +8,12 @@ from datetime import datetime
 # =========================================================
 # 設定
 # =========================================================
-DATA_DIR = Path(".", "prof_result")
-PREP_DIR = Path(".", "data")
+DATA_DIR = Path("prof_result")
+PREP_DIR = Path("data")
 MERGED_RETURN_PATH = Path("./data/return_data_merged.csv")
+BUY_WIN_FULL_PATH = Path("./data/buy_conditions_full_win.csv")
+BUY_PLC_FULL_PATH = Path("./data/buy_conditions_full_place.csv")
+
 
 RESULT_COLS = [
     "人気",
@@ -188,6 +191,21 @@ def attach_prev_total(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
         direction="backward",
         allow_exact_matches=False,
     )
+
+def make_bin_bounds(bins: list[float], labels: list[str], key_name: str) -> pd.DataFrame:
+    """
+    pd.cut の bins/labels から (label -> low/high/include_lowest) の対応表を作る
+    ルール: 最初のbinのみ low を含む（include_lowest=True相当）
+    """
+    rows = []
+    for i, lab in enumerate(labels):
+        rows.append({
+            key_name: lab,
+            "low": float(bins[i]),
+            "high": float(bins[i+1]),
+            "include_lowest": True if i == 0 else False,
+        })
+    return pd.DataFrame(rows)
 
 
 # =========================================================
@@ -642,20 +660,19 @@ buy_win = extract_buy_conditions_win(
 if buy_win.empty:
     st.info("単勝の買い条件は見つかりませんでした。")
 else:
-    st.dataframe(
-        buy_win[[
-            "レースレベル",
-            "上昇値区分",
-            "人気乖離区分",
-            "件数",
-            "単勝ROI",
-            "単勝的中率",
-        ]].style.format({
-            "単勝ROI": "{:.1f}%",
-            "単勝的中率": "{:.1f}%",
-        }),
+    buy_win_disp = buy_win.copy()
+    buy_win_disp["出力"] = False
+
+    edited_win = st.data_editor(
+        buy_win_disp,
         use_container_width=True,
         hide_index=True,
+        column_config={
+            "出力": st.column_config.CheckboxColumn("CSV出力"),
+        },
+        disabled=[
+            c for c in buy_win_disp.columns if c != "出力"
+        ],
     )
 
 # ---- 複勝条件 ----
@@ -669,26 +686,70 @@ buy_place = extract_buy_conditions_place(
 if buy_place.empty:
     st.info("複勝の買い条件は見つかりませんでした。")
 else:
-    st.dataframe(
-        buy_place[[
-            "レースレベル",
-            "上昇値区分",
-            "人気乖離区分",
-            "件数",
-            "複勝ROI",
-            "複勝的中率",
-        ]].style.format({
-            "複勝ROI": "{:.1f}%",
-            "複勝的中率": "{:.1f}%",
-        }),
+    buy_place_disp = buy_place.copy()
+    buy_place_disp["出力"] = False
+
+    edited_plc = st.data_editor(
+        buy_place_disp,
         use_container_width=True,
         hide_index=True,
+        column_config={
+            "出力": st.column_config.CheckboxColumn("CSV出力"),
+        },
+        disabled=[
+            c for c in buy_place_disp.columns if c != "出力"
+        ],
     )
 
     st.caption(
         f"※ 単勝条件：ROI ≧ {win_min_roi:.0f}% / 件数 ≧ {win_min_n}、"
         f"複勝条件：ROI ≧ {plc_min_roi:.0f}% / 件数 ≧ {plc_min_n}"
     )
+
+st.divider()
+st.subheader("📤 買い条件CSVの手動生成")
+
+if st.button("✅ 選択した条件をCSVに出力"):
+    # 単勝
+    win_sel = edited_win[edited_win["出力"]].drop(columns="出力", errors="ignore") \
+        if "edited_win" in locals() else pd.DataFrame()
+
+    # 複勝
+    plc_sel = edited_plc[edited_plc["出力"]].drop(columns="出力", errors="ignore") \
+        if "edited_plc" in locals() else pd.DataFrame()
+
+    if win_sel.empty and plc_sel.empty:
+        st.warning("CSVに出力する条件が選択されていません。")
+    else:
+        up_bounds = make_bin_bounds(bins_up, labels_up, "上昇値区分")
+        gap_bounds = make_bin_bounds(bins_gap, labels_gap, "人気乖離区分")
+
+        # 単勝CSV
+        if not win_sel.empty:
+            out_win = (
+                win_sel.merge(up_bounds, on="上昇値区分", how="left")
+                .merge(gap_bounds, on="人気乖離区分", how="left", suffixes=("_up", "_gap"))
+                .rename(columns={
+                    "low_up": "up_low", "high_up": "up_high", "include_lowest_up": "up_include_lowest",
+                    "low_gap": "gap_low", "high_gap": "gap_high", "include_lowest_gap": "gap_include_lowest",
+                })
+            )
+            out_win.to_csv(BUY_WIN_FULL_PATH, index=False, encoding="utf-8-sig")
+        
+        # 複勝CSV
+        if not plc_sel.empty:
+            out_plc = (
+                plc_sel.merge(up_bounds, on="上昇値区分", how="left")
+                .merge(gap_bounds, on="人気乖離区分", how="left", suffixes=("_up", "_gap"))
+                .rename(columns={
+                    "low_up": "up_low", "high_up": "up_high", "include_lowest_up": "up_include_lowest",
+                    "low_gap": "gap_low", "high_gap": "gap_high", "include_lowest_gap": "gap_include_lowest",
+                })
+            )
+            out_plc.to_csv(BUY_PLC_FULL_PATH, index=False, encoding="utf-8-sig")
+
+        st.success("✅ 選択した買い条件をCSVに出力しました")
+        st.caption(f"出力先: {BUY_WIN_FULL_PATH.name}, {BUY_PLC_FULL_PATH.name}")
 
 # =========================================================
 # デバッグ表示
