@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from buy_condition_logic import load_buy_conditions, apply_buy_conditions
+
 DATA_DIR = Path(".", "prof_result")  # 指定フォルダ（自動読み込み）
 KAKO_DIR = Path(".", "kako_data")    # 過去レースのCSVがあれば（任意）
 PREP_DIR = Path(".", "data")
@@ -552,92 +554,29 @@ if race_date is not None and place is not None and race_no is not None:
 st.metric("レースレベル", race_level if race_level else "—")
 
 st.write(f"**選択中：** 場所={place if place else '-'} / R={race_no if race_no is not None else '-'} / 合格のみ={'ON' if pass_only else 'OFF'}")
+st.caption("※ この画面の判定は、上記「合格のみ」フィルタ適用後の馬に対して行われます。")
 
-@st.cache_data(show_spinner="📥 buy_conditions（analysis出力）を読み込み中…")
-def load_buy_conditions(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame()
-    dfc = pd.read_csv(path, encoding="utf-8-sig")
-    dfc.columns = [str(c).strip() for c in dfc.columns]
-    # 数値列
-    for c in ["up_low", "up_high", "gap_low", "gap_high"]:
-        if c in dfc.columns:
-            dfc[c] = pd.to_numeric(dfc[c], errors="coerce")
-    # bool列
-    for c in ["up_include_lowest", "gap_include_lowest"]:
-        if c in dfc.columns:
-            dfc[c] = dfc[c].astype(bool)
-    return dfc
+cond_win = load_buy_conditions(str(BUY_WIN_FULL_PATH))
+cond_plc = load_buy_conditions(str(BUY_PLC_FULL_PATH))
 
-cond_win = load_buy_conditions(BUY_WIN_FULL_PATH)
-cond_plc = load_buy_conditions(BUY_PLC_FULL_PATH)
+# ======================================
+# 条件CSVの母集団（analysis側設定）を表示
+# ======================================
+csv_pop = None
+if "母集団" in cond_win.columns and cond_win["母集団"].dropna().astype(str).str.strip().any():
+    csv_pop = cond_win["母集団"].dropna().astype(str).iloc[0]
+elif "母集団" in cond_plc.columns and cond_plc["母集団"].dropna().astype(str).str.strip().any():
+    csv_pop = cond_plc["母集団"].dropna().astype(str).iloc[0]
 
-def in_interval(val: float, low: float, high: float, include_lowest: bool) -> bool:
-    if pd.isna(val) or pd.isna(low) or pd.isna(high):
-        return False
-    if include_lowest:
-        return (val >= low) and (val <= high)
-    return (val > low) and (val <= high)
-
-def judge_row(val_up, val_gap, cond_df_lv: pd.DataFrame):
-    """
-    戻り値:
-    （"✅" or "△" or "", 理由文字列)
-    ✅: 上昇値＆人気乖離の両方が条件に合致
-    △: 上昇値は合致、ただし人気乖離が未取得（NaN）なので条件付き
-    "": 不一致
-    """
-    if cond_df_lv is None or cond_df_lv.empty or pd.isna(val_up):
-        return "", ""
-
-    # 上昇値が一致する候補行を抽出
-    cand = cond_df_lv[
-        cond_df_lv.apply(
-            lambda r: in_interval(val_up, r["up_low"], r["up_high"], r["up_include_lowest"]),
-            axis=1
-        )
-    ]
-    if cand.empty:
-        return "", ""
-
-    # 人気乖離が無い（事前）なら△で「どの区分なら買いか」を返す
-    if pd.isna(val_gap):
-        gaps = " / ".join(cand["人気乖離区分"].astype(str).unique().tolist())
-        return "△", f"人気乖離が {gaps} なら買い"
-
-    # 人気乖離も一致するか
-    ok = cand[
-        cand.apply(
-            lambda r: in_interval(val_gap, r["gap_low"], r["gap_high"], r["gap_include_lowest"]),
-            axis=1
-        )
-    ]
-    if ok.empty:
-        gaps = " / ".join(cand["人気乖離区分"].astype(str).unique().tolist())
-        return "", f"人気乖離が {gaps} なら買い（現在は不一致）"
-
-    # 一番ROIが高い行を採用して説明に使う（任意）
-    best = ok.copy()
-    roi_col = "単勝ROI" if "単勝ROI" in ok.columns else ("複勝ROI" if "複勝ROI" in ok.columns else None)
-    if roi_col:
-        best = best.sort_values(roi_col, ascending=False)
-    r0 = best.iloc[0]
-    return "✅", f"{r0['上昇値区分']} & {r0['人気乖離区分']} (件数={int(r0['件数'])})"
+if csv_pop:
+    st.caption(f"📌 この買い条件CSVの母集団（analysis出力時）: {csv_pop}")
+else:
+    st.caption(f"📌 この買い条件CSVの母集団情報は未記録です（analysisでCSV出力し直すと記録されます）")
 
 # 該当Lvだけ条件を使う
 if race_level:
-    cw = cond_win[cond_win["レースレベル"] == race_level] if not cond_win.empty else pd.DataFrame()
-    cp = cond_plc[cond_plc["レースレベル"] == race_level] if not cond_plc.empty else pd.DataFrame()
-
     filtered = filtered.copy()
-    # 単勝
-    res = filtered.apply(lambda r: judge_row(r.get("利益度上昇値"), r.get("人気乖離"), cw), axis=1)
-    filtered["単勝_条件"] = res.apply(lambda t: t[0])
-    filtered["単勝_条件説明"] = res.apply(lambda t: t[1])
-    # 複勝
-    res2 = filtered.apply(lambda r: judge_row(r.get("利益度上昇値"), r.get("人気乖離"), cp), axis=1)
-    filtered["複勝_条件"] = res2.apply(lambda t: t[0])
-    filtered["複勝_条件説明"] = res2.apply(lambda t: t[1])
+    filtered = apply_buy_conditions(filtered, race_level, cond_win, cond_plc)
 
     # レース単位の通知
     if (filtered["単勝_条件"] == "✅").any():

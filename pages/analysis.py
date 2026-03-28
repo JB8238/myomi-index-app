@@ -326,6 +326,15 @@ with st.sidebar:
         selected_lv = []
         st.caption("レースレベル情報がありません")
 
+    # 分析の母集団（合格馬フィルタ）切り替え
+    st.subheader("分析母集団")
+    population_mode = st.radio(
+        "母集団を選択",
+        ["全馬（フィルタなし）", "合格馬のみ（総合利益度>=0）"],
+        index=0,
+        horizontal=False,
+    )
+
     # 買い条件 抽出パラメータ（UI）
     st.subheader("買い条件 抽出パラメータ")
 
@@ -400,9 +409,15 @@ if selected_lv and "レースレベル" in df_filtered.columns:
         df_filtered["レースレベル"].astype(str).isin(selected_lv)
     ]
 
+# 母集団フィルタ（合格馬のみ）
+if population_mode == "合格馬のみ（総合利益度>=0）" and "総合利益度" in df_filtered.columns:
+    df_filtered["総合利益度"] = pd.to_numeric(df_filtered["総合利益度"], errors="coerce")
+    df_filtered = df_filtered[df_filtered["総合利益度"].notna() & (df_filtered["総合利益度"] >= 0)]
+
 st.caption(
     f"レースレベル絞り込み後: {len(df_filtered)} / {len(df)}"
 )
+st.caption(f"分析母集団: {population_mode}")
 
 df_hm = df_filtered.copy()
 
@@ -411,7 +426,7 @@ if df_hm["利益度上昇値"].notna().sum() == 0:
     st.info("利益度上昇値が算出できるデータがありません。")
 else:
     bins_up = [-999, 0, 2, 4, 6, 8, 10, 14, 999]
-    labels_up = ["<=0", "1–2", "3–4", "5–6", "7–8", "9–10", "11–14", "15+"]
+    labels_up = ["<=0", "(0,2]", "(2,4]", "(4,6]", "(6,8]", "(8,10]", "(10,14]", "14+"]
     df_hm["上昇値区分"] = pd.cut(
         df_hm["利益度上昇値"], bins=bins_up, labels=labels_up, include_lowest=True
     )
@@ -734,6 +749,7 @@ if st.button("✅ 選択した条件をCSVに出力"):
                     "low_gap": "gap_low", "high_gap": "gap_high", "include_lowest_gap": "gap_include_lowest",
                 })
             )
+            out_win["母集団"] = population_mode
             out_win.to_csv(BUY_WIN_FULL_PATH, index=False, encoding="utf-8-sig")
         
         # 複勝CSV
@@ -746,6 +762,7 @@ if st.button("✅ 選択した条件をCSVに出力"):
                     "low_gap": "gap_low", "high_gap": "gap_high", "include_lowest_gap": "gap_include_lowest",
                 })
             )
+            out_plc["母集団"] = population_mode
             out_plc.to_csv(BUY_PLC_FULL_PATH, index=False, encoding="utf-8-sig")
 
         st.success("✅ 選択した買い条件をCSVに出力しました")
