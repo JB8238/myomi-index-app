@@ -3,6 +3,7 @@ import numpy as np
 import streamlit as st
 from pathlib import Path
 import re
+import io
 from datetime import datetime
 
 # =========================================================
@@ -206,6 +207,11 @@ def make_bin_bounds(bins: list[float], labels: list[str], key_name: str) -> pd.D
             "include_lowest": True if i == 0 else False,
         })
     return pd.DataFrame(rows)
+
+def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
+    buffer = io.StringIO()
+    df.to_csv(buffer, index=False)
+    return buffer.getvalue().encode("utf-8-sig")
 
 
 # =========================================================
@@ -750,7 +756,6 @@ if st.button("✅ 選択した条件をCSVに出力"):
                 })
             )
             out_win["母集団"] = population_mode
-            out_win.to_csv(BUY_WIN_FULL_PATH, index=False, encoding="utf-8-sig")
         
         # 複勝CSV
         if not plc_sel.empty:
@@ -763,10 +768,28 @@ if st.button("✅ 選択した条件をCSVに出力"):
                 })
             )
             out_plc["母集団"] = population_mode
-            out_plc.to_csv(BUY_PLC_FULL_PATH, index=False, encoding="utf-8-sig")
+        
+st.subheader("📤 買い条件CSVの手動生成（ダウンロード）")
+if not win_sel.empty:
+    csv_bytes_win = df_to_csv_bytes(out_win)
+    st.download_button(
+        label="⬇️ 単勝条件CSVをダウンロード",
+        data=csv_bytes_win,
+        file_name="buy_conditions_full_win.csv",
+        mime="text/csv",
+    )
 
-        st.success("✅ 選択した買い条件をCSVに出力しました")
-        st.caption(f"出力先: {BUY_WIN_FULL_PATH.name}, {BUY_PLC_FULL_PATH.name}")
+if not plc_sel.empty:
+    csv_bytes_plc = df_to_csv_bytes(out_plc)
+    st.download_button(
+        label="⬇️ 複勝条件CSVをダウンロード",
+        data=csv_bytes_plc,
+        file_name="buy_conditions_full_place.csv",
+        mime="text/csv",
+    )
+
+st.success("✅ 選択した買い条件をCSVに出力しました")
+st.caption(f"出力先: {BUY_WIN_FULL_PATH.name}, {BUY_PLC_FULL_PATH.name}")
 
 # =========================================================
 # デバッグ表示
