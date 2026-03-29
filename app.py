@@ -248,8 +248,13 @@ if selected_file is None:
 # -----------------------------------
 # ✅ 開催日単位：買い条件あり判定
 # -----------------------------------
-cond_win = load_buy_conditions(str(BUY_WIN_FULL_PATH))
-cond_plc = load_buy_conditions(str(BUY_PLC_FULL_PATH))
+win_path = BUY_WIN_FULL_PATH
+win_mtime = win_path.stat().st_mtime if win_path.exists() else 0.0
+cond_win = load_buy_conditions(str(win_path), win_mtime)
+
+plc_path = BUY_PLC_FULL_PATH
+plc_mtime = plc_path.stat().st_mtime if plc_path.exists() else 0.0
+cond_plc = load_buy_conditions(str(plc_path), plc_mtime)
 
 csv_pop = None
 if "母集団" in cond_win.columns and cond_win["母集団"].dropna().astype(str).str.strip().any():

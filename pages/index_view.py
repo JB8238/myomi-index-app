@@ -556,8 +556,13 @@ st.metric("レースレベル", race_level if race_level else "—")
 st.write(f"**選択中：** 場所={place if place else '-'} / R={race_no if race_no is not None else '-'} / 合格のみ={'ON' if pass_only else 'OFF'}")
 st.caption("※ この画面の判定は、上記「合格のみ」フィルタ適用後の馬に対して行われます。")
 
-cond_win = load_buy_conditions(str(BUY_WIN_FULL_PATH))
-cond_plc = load_buy_conditions(str(BUY_PLC_FULL_PATH))
+win_path = BUY_WIN_FULL_PATH
+win_mtime = win_path.stat().st_mtime if win_path.exists() else 0.0
+cond_win = load_buy_conditions(str(win_path), win_mtime)
+
+plc_path = BUY_PLC_FULL_PATH
+plc_mtime = plc_path.stat().st_mtime if plc_path.exists() else 0.0
+cond_plc = load_buy_conditions(str(plc_path), plc_mtime)
 
 # ======================================
 # 条件CSVの母集団（analysis側設定）を表示

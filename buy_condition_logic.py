@@ -8,7 +8,7 @@ import streamlit as st
 
 
 @st.cache_data(show_spinner=False)
-def load_buy_conditions(path_str: str) -> pd.DataFrame:
+def load_buy_conditions(path_str: str, file_mtime: float) -> pd.DataFrame:
     """analysisが出力した buy_conditions_full_*.csv を読み込む（統一ローダ）"""
     p = Path(path_str)
     if not p.exists():
