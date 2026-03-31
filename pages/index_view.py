@@ -251,6 +251,40 @@ def apply_filters(
             out = out[out["総合利益度"].notna() & (out["総合利益度"] >= pass_threshold)]
     return out
 
+def add_component_pass_count_local(d: pd.DataFrame) -> pd.DataFrame:
+    """騎手/調教師/種牡馬の利益度が>=0のカテゴリ数(0-3)を付与"""
+    x = d.copy()
+    def _ok(v): return pd.notna(v) and v >= 0
+    cnt = 0
+    for col in ["騎手利益度", "調教師利益度", "種牡馬利益度"]:
+        if col in x.columns:
+            x[col] = pd.to_numeric(x[col], errors="coerce")
+            cnt += x[col].apply(_ok).astype(int)
+    x["コンポーネント合格数"] = cnt
+    x["合格数区分"] = x["コンポーネント合格数"].map({
+        0: "0/3（全弱）",
+        1: "1/3（片輪）",
+        2: "2/3（概ね良）",
+        3: "3/3（万全）",
+    })
+    return x
+
+def add_race_cv_local(d: pd.DataFrame) -> pd.DataFrame:
+    """単一レース（この画面）用：総合利益度からcv(std/mean)を計算して全行に付与"""
+    x = d.copy()
+    if "総合利益度" not in x.columns:
+        x["cv"] = np.nan
+        return x
+    vals = pd.to_numeric(x["総合利益度"], errors="coerce").dropna().to_numpy()
+    if len(vals) == 0:
+        x["cv"] = np.nan
+        return x
+    mean = float(np.mean(vals))
+    std = float(np.std(vals, ddof=0)) if len(vals) >= 2 else 0.0
+    x["cv"] = float(std / mean) if mean != 0 else np.nan
+    return x
+    
+
 
 # ---------------------------
 # 5) UI（スマホ向けカード）
@@ -581,6 +615,9 @@ else:
 # 該当Lvだけ条件を使う
 if race_level:
     filtered = filtered.copy()
+    # 前提条件 (cv & 合格数) のための列を付与
+    filtered = add_component_pass_count_local(filtered)
+    filtered = add_race_cv_local(filtered)
     filtered = apply_buy_conditions(filtered, race_level, cond_win, cond_plc)
 
     # レース単位の通知

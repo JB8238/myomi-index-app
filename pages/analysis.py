@@ -213,6 +213,92 @@ def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
     df.to_csv(buffer, index=False)
     return buffer.getvalue().encode("utf-8-sig")
 
+def calc_race_competitiveness(df_in: pd.DataFrame) -> pd.DataFrame:
+    """
+    レース単位の混戦度（指数分散）を計算
+    key: 開催日, 場所, R
+    指標:
+        - cv = std/mean（平均が小さいと大きくなりやすいので分位推奨）
+        - gap12 = top1 - top2（上位の抜け具合）
+        - std = 標準偏差（混戦度そのもの）
+    """
+    key = ["開催日", "場所", "R"]
+    need = set(key + ["総合利益度"])
+    if not need.issubset(df_in.columns):
+        return pd.DataFrame(columns=key + ["n","mean","std","cv","top1", "top2", "gap12"])
+
+    x = df_in.copy()
+    x["総合利益度"] = pd.to_numeric(x["総合利益度"], errors="coerce")
+    x = x.dropna(subset=["総合利益度"])
+
+    def _agg(g: pd.DataFrame) -> pd.Series:
+        vals = g["総合利益度"].sort_values(ascending=False).to_numpy()
+        n = len(vals)
+        top1 = float(vals[0]) if n >= 1 else np.nan
+        top2 = float(vals[1]) if n >= 2 else np.nan
+        gap12 = (top1 - top2) if pd.notna(top1) and pd.notna(top2) else np.nan
+        mean = float(np.nanmean(vals)) if n else np.nan
+        std = float(np.nanstd(vals, ddof=0)) if n >= 2 else 0.0
+        cv = float(std / mean) if pd.notna(mean) and mean != 0 else np.nan
+        return pd.Series({
+            "n": n,
+            "mean": mean,
+            "std": std,
+            "cv": cv,
+            "top1": top1,
+            "top2": top2,
+            "gap12": gap12,
+        })
+
+    out = x.groupby(key, observed=True).apply(_agg).reset_index()
+    return out
+
+def add_component_pass_count(df_in: pd.DataFrame) -> pd.DataFrame:
+    """
+    総合利益度>=0の馬について、
+    騎手/調教師/種牡馬 利益度が >=0 のカテゴリ数を数える
+    """
+    d = df_in.copy()
+
+    def _ok(x):
+        return pd.notna(x) and x >= 0
+
+    cnt = 0
+    for col in ["騎手利益度", "調教師利益度", "種牡馬利益度"]:
+        if col in d.columns:
+            d[col] = pd.to_numeric(d[col], errors="coerce")
+            cnt += d[col].apply(_ok).astype(int)
+
+    d["コンポーネント合格数"] = cnt
+    d["合格数区分"] = d["コンポーネント合格数"].map({
+        0: "0/3（全弱）",
+        1: "1/3（片輪）",
+        2: "2/3（概ね良）",
+        3: "3/3（万全）",
+    })
+    return d
+
+def add_race_cv(df_in: pd.DataFrame) -> pd.DataFrame:
+    """レース単位のcv (std/mean) を計算して全行に付与"""
+    d = df_in.copy()
+    key = ["開催日", "場所", "R"]
+    if not set(key).issubset(d.columns) or "総合利益度" not in d.columns:
+        d["cv"] = np.nan
+        return d
+
+    d["総合利益度"] = pd.to_numeric(d["総合利益度"], errors="coerce")
+
+    def _cv(g: pd.DataFrame) -> float:
+        vals = g["総合利益度"].dropna().to_numpy()
+        if len(vals) == 0:
+            return np.nan
+        mean = float(np.mean(vals))
+        std = float(np.std(vals, ddof=0)) if len(vals) >= 2 else 0.0
+        return float(std / mean) if mean != 0 else np.nan
+
+    cv_map = d.groupby(key, observed=True).apply(_cv).rename("cv").reset_index()
+    return d.merge(cv_map, on=key, how="left")
+
 
 # =========================================================
 # データ読み込み
@@ -341,6 +427,12 @@ with st.sidebar:
         horizontal=False,
     )
 
+    st.subheader("戦略前提フィルタ（④×⑤）")
+    # 3/3固定（チェックでON/OFFにすると運用が楽）
+    use_comp33 = st.checkbox("合格数区分を 3/3（万全）に固定", value=True)
+    # 混戦度上位率（デフォルト50%）
+    top_rate = st.slider("混戦度（cv）上位率", min_value=0.1, max_value=0.9, value=0.5, step=0.05)
+
     # 買い条件 抽出パラメータ（UI）
     st.subheader("買い条件 抽出パラメータ")
 
@@ -376,6 +468,7 @@ with st.sidebar:
         step=1,
     )
 
+
 # =========================================================
 # 分析表示（回収率/的中率）
 # =========================================================
@@ -408,7 +501,7 @@ def calc_roi_table(src: pd.DataFrame, group_col: str) -> pd.DataFrame:
 
     return out
 
-# レースレベルによるフィルタリング
+# ---- レースレベルによるフィルタリング ----
 df_filtered = df.copy()
 if selected_lv and "レースレベル" in df_filtered.columns:
     df_filtered = df_filtered[
@@ -425,8 +518,98 @@ st.caption(
 )
 st.caption(f"分析母集団: {population_mode}")
 
-df_hm = df_filtered.copy()
+# ---- レース単位の指数集中度/分散を付与 ----
+race_stats = calc_race_competitiveness(df_filtered)
+df_filtered = add_component_pass_count(df_filtered)
+# df_filtered = df_filtered.merge(race_stats, on=["開催日", "場所", "R"], how="left")
+df_filtered = add_race_cv(df_filtered)
 
+with st.sidebar:
+    st.subheader("混戦度フィルタ（指数の分散）")
+    # cv: 変動係数（std/mean）を推奨。ない場合に備えてガード
+    if "cv" in df_filtered.columns and df_filtered["cv"].dropna().size > 0:
+        cv_min = float(np.nanmin(df_filtered["cv"]))
+        cv_max = float(np.nanmax(df_filtered["cv"]))
+        # 極端値のときの保険
+        if not np.isfinite(cv_min): cv_min = 0.0
+        if not np.isfinite(cv_max): cv_max = 1.0
+        cv_range = st.slider(
+            "対象 cv (std/mean) 範囲",
+            min_value=float(max(0.0, cv_min)),
+            max_value=float(max(0.01, cv_max)),
+            value=(float(max(0.0, cv_min)), float(max(0.01, cv_max))),
+            step=0.01,
+        )
+    else:
+        cv_range = None
+        st.caption("cv（混戦度）を計算できるデータがありません")
+        
+    st.subheader("混戦度（レース単位）")
+    comp_metric = st.radio(
+        "混戦度の指標",
+        ["cv (std/mean)", "std（標準偏差）", "gap12（1位-2位差）"],
+        index=0
+    )
+    q_bins = st.slider("混戦度の分位数 (qcut)", min_value=4, max_value=12, value=8, step=1)
+
+
+# ---- 分析実行 ----
+df_hm = df_filtered.copy()
+metric_col = {"cv (std/mean)": "cv", "std（標準偏差）": "std", "gap12（1位-2位差）": "gap12"}[comp_metric]
+
+if metric_col in df_hm.columns and df_hm[metric_col].dropna().size > 0:
+    # qcutは同値が多いと落ちることがあるので duplicates='drop' で安全に
+    df_hm["混戦度区分"] = pd.qcut(df_hm[metric_col], q=q_bins, duplicates="drop")
+else:
+    df_hm["混戦度区分"] = np.nan
+
+if "総合利益度" in df_hm.columns and df_hm["総合利益度"].dropna().size > 0:
+    df_hm["指数値区分"] = pd.qcut(pd.to_numeric(df_hm["総合利益度"], errors="coerce"), q=6, duplicates="drop")
+else:
+    df_hm["指数値区分"] = np.nan
+
+if "総合利益度順位" in df_hm.columns:
+    r = pd.to_numeric(df_hm["総合利益度順位"], errors="coerce")
+    bins_rank = [-999, 3, 6, 10, 999]
+    labels_rank = ["1-3", "4-6", "7-10", "11+"]
+    df_hm["指数順位区分"] = pd.cut(r, bins=bins_rank, labels=labels_rank, include_lowest=True)
+else:
+    df_hm["指数順位区分"] = np.nan
+
+if "総合利益度" in df_hm.columns:
+    s = pd.to_numeric(df_hm["総合利益度"], errors="coerce")
+    bins_index = [-999, -10, -5, 0, 5, 10, 15, 999]
+    labels_index = ["<=-10", "(-10,-5]", "(-5,0]", "(0,5]", "(5,10]", "(10,15]", "15+"]
+    df_hm["指数値区分"] = pd.cut(r, bins=bins_index, labels=labels_index, include_lowest=True)
+else:
+    df_hm["指数値区分"] = np.nan
+
+# df_hm["コンポーネント合格数"] = df_hm["コンポーネント合格数"].astype("Int64")
+# df_hm["合格数区分"] = df_hm["コンポーネント合格数"].map({
+#     0: "0/3（全弱）",
+#     1: "1/3（片輪）",
+#     2: "2/3（概ね良）",
+#     3: "3/3（万全）",
+# })
+
+if use_comp33 and "合格数区分" in df_hm.columns:
+    df_hm = df_hm[df_hm["合格数区分"] == "3/3（万全）"]
+
+# cv上位率（レース単位で閾値を出して固定）
+cv_threshold = None
+if "cv" in df_hm.columns:
+    race_key = ["開催日", "場所", "R"]
+    race_cv = df_hm.drop_duplicates(race_key)[race_key + ["cv"]].dropna()
+    if not race_cv.empty:
+        cv_threshold = float(race_cv["cv"].quantile(1 - top_rate))
+        df_hm = df_hm[df_hm["cv"] >= cv_threshold]
+
+st.caption(f"戦略前提フィルタ後: {len(df_hm)} / {len(df_filtered)}")
+if cv_threshold is not None:
+    st.caption(f"混戦度(cv) 閾値: {cv_threshold:.3f} (上位{int(top_rate*100)}%)")
+    
+
+# ----- 分析内容 -----
 st.header("① 利益度上昇値 × 回収率・的中率")
 if df_hm["利益度上昇値"].notna().sum() == 0:
     st.info("利益度上昇値が算出できるデータがありません。")
@@ -468,6 +651,43 @@ else:
         use_container_width=True,
         hide_index=True,
     )
+
+st.header("③-1 指数順位 × 混戦度区分 (qcut) × 回収率")
+
+x_rank = df_hm.dropna(subset=["混戦度区分", "指数順位区分"]).copy()
+x_rank["単勝_回収"] = pd.to_numeric(x_rank.get("単勝"), errors="coerce").fillna(0)
+x_rank["複勝_回収"] = pd.to_numeric(x_rank.get("複勝"), errors="coerce").fillna(0)
+
+pivot_win_rank = x_rank.pivot_table(index="指数順位区分", columns="混戦度区分", values="単勝_回収", aggfunc="mean", observed=True)
+pivot_plc_rank = x_rank.pivot_table(index="指数順位区分", columns="混戦度区分", values="複勝_回収", aggfunc="mean", observed=True)
+pivot_n_rank = x_rank.pivot_table(index="指数順位区分", columns="混戦度区分", values="馬番" if "馬番" in x_rank.columns else "馬名", aggfunc="count", observed=True, fill_value=0)
+
+tab = st.radio("表示", ["単勝回収率", "複勝回収率", "件数"], horizontal=True)
+if tab == "単勝回収率":
+    st.dataframe(pivot_win_rank.style.format("{:.1f}%"), use_container_width=True)
+elif tab == "複勝回収率":
+    st.dataframe(pivot_plc_rank.style.format("{:.1f}%"), use_container_width=True)
+else:
+    st.dataframe(pivot_n_rank.style.format("{:.0f}"), use_container_width=True)
+
+
+st.header("③-2 指数値 × 混戦度区分 (qcut) × 回収率")
+
+x_index = df_hm.dropna(subset=["混戦度区分", "指数値区分"]).copy()
+x_index["単勝_回収"] = pd.to_numeric(x_index.get("単勝"), errors="coerce").fillna(0)
+x_index["複勝_回収"] = pd.to_numeric(x_index.get("複勝"), errors="coerce").fillna(0)
+
+pivot_win_index = x_index.pivot_table(index="指数値区分", columns="混戦度区分", values="単勝_回収", aggfunc="mean", observed=True)
+pivot_plc_index = x_index.pivot_table(index="指数値区分", columns="混戦度区分", values="複勝_回収", aggfunc="mean", observed=True)
+pivot_n_index = x_index.pivot_table(index="指数値区分", columns="混戦度区分", values="馬番" if "馬番" in x_index.columns else "馬名", aggfunc="count", observed=True, fill_value=0)
+
+# tab_index = st.radio("表示", ["単勝回収率", "複勝回収率", "件数"], horizontal=True)
+if tab == "単勝回収率":
+    st.dataframe(pivot_win_index.style.format("{:.1f}%"), use_container_width=True)
+elif tab == "複勝回収率":
+    st.dataframe(pivot_plc_index.style.format("{:.1f}%"), use_container_width=True)
+else:
+    st.dataframe(pivot_n_index.style.format("{:.0f}"), use_container_width=True)
 
 # この後のヒートマップ描画は区分が両方揃っている行のみを対象
 df_hm = df_hm.dropna(subset=["上昇値区分", "人気乖離区分"])
@@ -529,7 +749,72 @@ def make_heatmap_table(d: pd.DataFrame, value_col: str) -> pd.DataFrame:
 
     return pd.DataFrame()
 
-st.header("③ ヒートマップ：Lv × 上昇値区分 × 人気乖離区分")
+st.header("④ コンポーネント合格数 × 回収率・的中率")
+
+if "コンポーネント合格数" not in df_filtered.columns:
+    st.info("コンポーネント利益度の列が不足しています。")
+else:
+    df_view = df_filtered.copy()
+
+    # 表示用ラベル
+    df_view["合格数区分"] = df_view["コンポーネント合格数"].map({
+        0: "0/3（全弱）",
+        1: "1/3（片輪）",
+        2: "2/3（概ね良）",
+        3: "3/3（万全）",
+    })
+
+    t_comp = calc_roi_table(
+        df_view.dropna(subset=["合格数区分"]),
+        "合格数区分"
+    )
+
+    st.dataframe(
+        t_comp.style.format({
+            "単勝的中率": "{:.1f}%",
+            "複勝的中率": "{:.1f}%",
+            "単勝回収率": "{:.1f}%",
+            "複勝回収率": "{:.1f}%",
+        }),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption("※ 総合利益度>=0 の馬のみを対象")
+
+st.header("⑤ 混戦度 × コンポーネント合格数")
+
+x_ns = df_hm.dropna(subset=["混戦度区分", "合格数区分"]).copy()
+
+x_ns["単勝_回収"] = pd.to_numeric(x_ns.get("単勝"), errors="coerce").fillna(0)
+x_ns["複勝_回収"] = pd.to_numeric(x_ns.get("複勝"), errors="coerce").fillna(0)
+
+pivot_win_ns = x_ns.pivot_table(
+    index="合格数区分", columns="混戦度区分", values="単勝_回収",
+    aggfunc="mean", observed=True,
+)
+
+pivot_plc_ns = x_ns.pivot_table(
+    index="合格数区分", columns="混戦度区分", values="複勝_回収",
+    aggfunc="mean", observed=True,
+)
+
+pivot_n_ns = x_ns.pivot_table(
+    index="合格数区分", columns="混戦度区分",
+    values="馬番" if "馬番" in x_ns.columns else "馬名",
+    aggfunc="count", observed=True, fill_value=0,
+)
+
+tab = st.radio("表示指標", ["単勝ROI", "複勝ROI", "件数"], horizontal=True)
+
+if tab == "単勝ROI":
+    st.dataframe(pivot_win_ns.style.format("{:.1f}%"), use_container_width=True)
+elif tab == "複勝ROI":
+    st.dataframe(pivot_plc_ns.style.format("{:.1f}%"), use_container_width=True)
+else:
+    st.dataframe(pivot_n_ns.style.format("{:.0f}"), use_container_width=True)
+
+st.header("⑥ ヒートマップ：Lv × 上昇値区分 × 人気乖離区分")
 
 # 表示する指標を選択（ROI / 的中率 / 件数）
 metric = st.radio(
@@ -666,7 +951,7 @@ def extract_buy_conditions_place(
     return out
 
 st.divider()
-st.header("④ Lv別・自動抽出された買い条件")
+st.header("■ Lv別・自動抽出された買い条件")
 
 cells = build_condition_cells(df_hm)
 
@@ -728,68 +1013,79 @@ else:
     )
 
 st.divider()
-st.subheader("📤 買い条件CSVの手動生成")
+# st.subheader("📤 買い条件CSVの手動生成")
 
-if st.button("✅ 選択した条件をCSVに出力"):
-    # 単勝
-    win_sel = edited_win[edited_win["出力"]].drop(columns="出力", errors="ignore") \
-        if "edited_win" in locals() else pd.DataFrame()
+# if st.button("✅ 選択した条件をCSVに出力"):
+# 単勝
+win_sel = edited_win[edited_win["出力"]].drop(columns="出力", errors="ignore") \
+    if "edited_win" in locals() else pd.DataFrame()
+# 複勝
+plc_sel = edited_plc[edited_plc["出力"]].drop(columns="出力", errors="ignore") \
+    if "edited_plc" in locals() else pd.DataFrame()
 
-    # 複勝
-    plc_sel = edited_plc[edited_plc["出力"]].drop(columns="出力", errors="ignore") \
-        if "edited_plc" in locals() else pd.DataFrame()
+if win_sel.empty and plc_sel.empty:
+    st.warning("CSVに出力する条件が選択されていません。")
+else:
+    up_bounds = make_bin_bounds(bins_up, labels_up, "上昇値区分")
+    gap_bounds = make_bin_bounds(bins_gap, labels_gap, "人気乖離区分")
 
-    if win_sel.empty and plc_sel.empty:
-        st.warning("CSVに出力する条件が選択されていません。")
-    else:
-        up_bounds = make_bin_bounds(bins_up, labels_up, "上昇値区分")
-        gap_bounds = make_bin_bounds(bins_gap, labels_gap, "人気乖離区分")
-
-        # 単勝CSV
-        if not win_sel.empty:
-            out_win = (
-                win_sel.merge(up_bounds, on="上昇値区分", how="left")
-                .merge(gap_bounds, on="人気乖離区分", how="left", suffixes=("_up", "_gap"))
-                .rename(columns={
-                    "low_up": "up_low", "high_up": "up_high", "include_lowest_up": "up_include_lowest",
-                    "low_gap": "gap_low", "high_gap": "gap_high", "include_lowest_gap": "gap_include_lowest",
-                })
-            )
-            out_win["母集団"] = population_mode
-        
-        # 複勝CSV
-        if not plc_sel.empty:
-            out_plc = (
-                plc_sel.merge(up_bounds, on="上昇値区分", how="left")
-                .merge(gap_bounds, on="人気乖離区分", how="left", suffixes=("_up", "_gap"))
-                .rename(columns={
-                    "low_up": "up_low", "high_up": "up_high", "include_lowest_up": "up_include_lowest",
-                    "low_gap": "gap_low", "high_gap": "gap_high", "include_lowest_gap": "gap_include_lowest",
-                })
-            )
-            out_plc["母集団"] = population_mode
+    # 単勝CSV
+    if not win_sel.empty:
+        out_win = (
+            win_sel.merge(up_bounds, on="上昇値区分", how="left")
+            .merge(gap_bounds, on="人気乖離区分", how="left", suffixes=("_up", "_gap"))
+            .rename(columns={
+                "low_up": "up_low", "high_up": "up_high", "include_lowest_up": "up_include_lowest",
+                "low_gap": "gap_low", "high_gap": "gap_high", "include_lowest_gap": "gap_include_lowest",
+            })
+        )
+        out_win["母集団"] = population_mode
+        # --- 前提フィルタ情報（④×⑤）を保存
+        out_win["前提_合格数区分"] = "3/3（万全）" if use_comp33 else "ALL"
+        out_win["前提_混戦度指標"] = "cv"
+        out_win["前提_混戦度上位率"] = top_rate
+        out_win["前提_cv閾値"] = cv_threshold if cv_threshold is not None else np.nan
+    
+    # 複勝CSV
+    if not plc_sel.empty:
+        out_plc = (
+            plc_sel.merge(up_bounds, on="上昇値区分", how="left")
+            .merge(gap_bounds, on="人気乖離区分", how="left", suffixes=("_up", "_gap"))
+            .rename(columns={
+                "low_up": "up_low", "high_up": "up_high", "include_lowest_up": "up_include_lowest",
+                "low_gap": "gap_low", "high_gap": "gap_high", "include_lowest_gap": "gap_include_lowest",
+            })
+        )
+        out_plc["母集団"] = population_mode
+        # --- 前提フィルタ情報（④×⑤）を保存
+        out_plc["前提_合格数区分"] = "3/3（万全）" if use_comp33 else "ALL"
+        out_plc["前提_混戦度指標"] = "cv"
+        out_plc["前提_混戦度上位率"] = top_rate
+        out_plc["前提_cv閾値"] = cv_threshold if cv_threshold is not None else np.nan
         
 st.subheader("📤 買い条件CSVの手動生成（ダウンロード）")
 if not win_sel.empty:
     csv_bytes_win = df_to_csv_bytes(out_win)
-    st.download_button(
+    if st.download_button(
         label="⬇️ 単勝条件CSVをダウンロード",
         data=csv_bytes_win,
         file_name="buy_conditions_full_win.csv",
         mime="text/csv",
-    )
+    ):
+        st.success("✅ 選択した単勝買い条件をCSVに出力しました")
 
 if not plc_sel.empty:
     csv_bytes_plc = df_to_csv_bytes(out_plc)
-    st.download_button(
+    if st.download_button(
         label="⬇️ 複勝条件CSVをダウンロード",
         data=csv_bytes_plc,
         file_name="buy_conditions_full_place.csv",
         mime="text/csv",
-    )
+    ):
+        st.success("✅ 選択した複勝買い条件をCSVに出力しました")
 
-st.success("✅ 選択した買い条件をCSVに出力しました")
-st.caption(f"出力先: {BUY_WIN_FULL_PATH.name}, {BUY_PLC_FULL_PATH.name}")
+# st.success("✅ 選択した買い条件をCSVに出力しました")
+# st.caption(f"出力先: {BUY_WIN_FULL_PATH.name}, {BUY_PLC_FULL_PATH.name}")
 
 # =========================================================
 # デバッグ表示

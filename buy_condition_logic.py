@@ -8,7 +8,7 @@ import streamlit as st
 
 
 @st.cache_data(show_spinner=False)
-def load_buy_conditions(path_str: str, file_mtime: float) -> pd.DataFrame:
+def load_buy_conditions(path_str: str, file_mtime: float | None = None) -> pd.DataFrame:
     """analysisが出力した buy_conditions_full_*.csv を読み込む（統一ローダ）"""
     p = Path(path_str)
     if not p.exists():
@@ -25,6 +25,11 @@ def load_buy_conditions(path_str: str, file_mtime: float) -> pd.DataFrame:
         if c in dfc.columns:
             dfc[c] = dfc[c].astype(bool)
 
+    # ---- 前提条件列（analysisが付与）を数値化しておく ----
+    for c in ["前提_cv閾値", "前提_混戦度上位率"]:
+        if c in dfc.columns:
+            dfc[c] = pd.to_numeric(dfc[c], errors="coerce")
+
     return dfc
 
 
@@ -34,6 +39,41 @@ def in_interval(val: float, low: float, high: float, include_lowest: bool) -> bo
     if include_lowest:
         return (val >= low) and (val <= high)
     return (val > low) and (val <= high)
+
+def check_prereq(row: pd.Series, cond_df_lv: pd.DataFrame) -> tuple[bool, str]:
+    """
+    条件CSVに書かれた「前提条件（cv & 合格数）」を満たすかを判定する。
+    戻り値: (OKか, 理由)
+    """
+    if cond_df_lv is None or cond_df_lv.empty:
+        return True, ""
+
+    r0 = cond_df_lv.iloc[0]
+
+    # ---- 合格数前提（例: 3/3（万全）） ----
+    prereq_comp = str(r0.get("前提_合格数区分", "")).strip()
+    if prereq_comp and prereq_comp != "ALL":
+        # row側は「コンポーネント合格数」か「合格数区分」どちらかがあればOKにする
+        comp_ok = True
+        if "コンポーネント合格数" in row:
+            comp_ok = (pd.to_numeric(row.get("コンポーネント合格数"), errors="coerce") == 3) if prereq_comp.startswith("3/3") else True
+        elif "合格数区分" in row:
+            comp_ok = (str(row.get("合格数区分")) == prereq_comp)
+        else:
+            comp_ok = False
+        if not comp_ok:
+            return False, f"前提未達: 合格数={prereq_comp}"
+
+    # ---- cv閾値前提 ----
+    cv_th = r0.get("前提_cv閾値", np.nan)
+    if pd.notna(cv_th):
+        cv_val = row.get("cv", np.nan)
+        if pd.isna(cv_val):
+            return False, "前提未達: cvが未計算"
+        if float(cv_val) < float(cv_th):
+            return False, f"前提未達: cv<{float(cv_th):.3f}"
+
+    return True, ""
 
 
 def judge_row(val_up, val_gap, cond_df_lv: pd.DataFrame):
@@ -91,11 +131,19 @@ def apply_buy_conditions(df: pd.DataFrame, race_level: str, cond_win: pd.DataFra
     cw = cond_win[cond_win["レースレベル"] == race_level] if not cond_win.empty else pd.DataFrame()
     cp = cond_plc[cond_plc["レースレベル"] == race_level] if not cond_plc.empty else pd.DataFrame()
 
-    res_w = out.apply(lambda r: judge_row(r.get("利益度上昇値"), r.get("人気乖離"), cw), axis=1)
+    res_w = out.apply(
+        lambda r: ("", check_prereq(r, cw)[1]) if not check_prereq(r, cw)[0]
+        else judge_row(r.get("利益度上昇値"), r.get("人気乖離"), cw),
+        axis=1
+    )
     out["単勝_条件"] = res_w.apply(lambda t: t[0])
     out["単勝_条件説明"] = res_w.apply(lambda t: t[1])
 
-    res_p = out.apply(lambda r: judge_row(r.get("利益度上昇値"), r.get("人気乖離"), cp), axis=1)
+    res_p = out.apply(
+        lambda r: ("", check_prereq(r, cp)[1]) if not check_prereq(r, cp)[0]
+        else judge_row(r.get("利益度上昇値"), r.get("人気乖離"), cp),
+        axis=1
+    )
     out["複勝_条件"] = res_p.apply(lambda t: t[0])
     out["複勝_条件説明"] = res_p.apply(lambda t: t[1])
 

@@ -94,64 +94,6 @@ def load_race_level_map(prep_root: Path, target_date: str | None) -> dict:
     
     return level_map
 
-# @st.cache_data(show_spinner=False)
-# def load_buy_conditions(path: Path) -> pd.DataFrame:
-#     if not path.exists():
-#         return pd.DataFrame()
-#     dfc = pd.read_csv(path, encoding="utf-8-sig")
-#     dfc.columns = [str(c).strip() for c in dfc.columns]
-#     for c in ["up_low", "up_high", "gap_low", "gap_high"]:
-#         if c in dfc.columns:
-#             dfc[c] = pd.to_numeric(dfc[c], errors="coerce")
-#     for c in ["up_include_lowest", "gap_include_lowest"]:
-#         if c in dfc.columns:
-#             dfc[c] = dfc[c].astype(bool)
-#     return dfc
-
-# def in_interval(val: float, low: float, high: float, include_lowest: bool) -> bool:
-#     if pd.isna(val) or pd.isna(low) or pd.isna(high):
-#         return False
-#     if include_lowest:
-#         return (val >= low) and (val <= high)
-#     return (val > low) and (val <= high)
-
-# def race_has_buy_hit(df_race: pd.DataFrame, cond_df: pd.DataFrame, race_level: str) -> bool:
-#     if cond_df.empty or df_race.empty or race_level is None:
-#         return False
-
-#     cond_lv = cond_df[cond_df["レースレベル"] == race_level]
-#     if cond_lv.empty:
-#         return False
-
-#     for _, row in df_race.iterrows():
-#         up = row.get("利益度上昇値")
-#         gap = row.get("人気乖離")
-
-#         # 上昇値が合う条件
-#         cand = cond_lv[
-#             cond_lv.apply(
-#                 lambda r: in_interval(up, r["up_low"], r["up_high"], r["up_include_lowest"]),
-#                 axis=1
-#             )
-#         ]
-#         if cand.empty:
-#             continue
-
-#         # 人気乖離が無い場合は「条件あり」とみなす（開催日バッジ用）
-#         if pd.isna(gap):
-#             return True
-
-#         ok = cand[
-#             cand.apply(
-#                 lambda r: in_interval(gap, r["gap_low"], r["gap_high"], r["gap_include_lowest"]),
-#                 axis=1
-#             )
-#         ]
-#         if not ok.empty:
-#             return True
-
-#     return False
-
 @st.cache_data(show_spinner=False)
 def build_prof_history(data_dir: str) -> pd.DataFrame:
     rows = []
@@ -200,6 +142,39 @@ def find_prev_total(history: pd.DataFrame, horse_name: str, cur_date: int, cur_m
         return np.nan
     h = h.sort_values(["__date", "__mtime"])
     return h.iloc[-1]["総合利益度"]
+
+def add_component_pass_count_local(d: pd.DataFrame) -> pd.DataFrame:
+    """騎手/調教師/種牡馬の利益度が>=0のカテゴリ数(0-3)を付与"""
+    x = d.copy()
+    def _ok(v): return pd.notna(v) and v >= 0
+    cnt = 0
+    for col in ["騎手利益度", "調教師利益度", "種牡馬利益度"]:
+        if col in x.columns:
+            x[col] = pd.to_numeric(x[col], errors="coerce")
+            cnt += x[col].apply(_ok).astype(int)
+    x["コンポーネント合格数"] = cnt
+    x["合格数区分"] = x["コンポーネント合格数"].map({
+        0: "0/3（全弱）",
+        1: "1/3（片輪）",
+        2: "2/3（概ね良）",
+        3: "3/3（万全）",
+    })
+    return x
+
+def add_race_cv_local(d: pd.DataFrame) -> pd.DataFrame:
+    """単一レース（この画面）用：総合利益度からcv(std/mean)を計算して全行に付与"""
+    x = d.copy()
+    if "総合利益度" not in x.columns:
+        x["cv"] = np.nan
+        return x
+    vals = pd.to_numeric(x["総合利益度"], errors="coerce").dropna().to_numpy()
+    if len(vals) == 0:
+        x["cv"] = np.nan
+        return x
+    mean = float(np.mean(vals))
+    std = float(np.std(vals, ddof=0)) if len(vals) >= 2 else 0.0
+    x["cv"] = float(std / mean) if mean != 0 else np.nan
+    return x
 
 # -----------------------------------
 # データ読み込み
@@ -304,8 +279,11 @@ for (place, r), g in df.groupby(["場所", "R"]):
     if "総合利益度" in g_base.columns:
         g_base["総合利益度"] = pd.to_numeric(g_base["総合利益度"], errors="coerce")
         g_base = g_base[g_base["総合利益度"].notna() & (g_base["総合利益度"] >= 0)]
+
+    # 前提条件 (cv & 合格数) のための列を付与
+    g_base = add_component_pass_count_local(g_base)
+    g_base = add_race_cv_local(g_base)
     g2 = apply_buy_conditions(g_base, lv, cond_win, cond_plc)
-    
     badge = race_badge_from_horses(g2)
     race_has_condition[(place, int(r))] = badge
 
