@@ -6,6 +6,7 @@ from datetime import datetime
 import re
 
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions, race_badge_from_horses
+from core.history import find_prev_total
 
 
 DATA_DIR = Path("prof_result")
@@ -127,21 +128,21 @@ def build_prof_history(data_dir: str) -> pd.DataFrame:
     hist = pd.concat(rows, ignore_index=True)
     return hist
 
-def find_prev_total(history: pd.DataFrame, horse_name: str, cur_date: int, cur_mtime: float, cur_file: str):
-    h = history[
-        (history["馬名"] == horse_name) &
-        (history["__file"] != cur_file)
-    ]
-    if h.empty:
-        return np.nan
-    h = h[
-        (h["__date"] < cur_date) |
-        ((h["__date"] == cur_date) & (h["__mtime"] < cur_mtime))
-    ]
-    if h.empty:
-        return np.nan
-    h = h.sort_values(["__date", "__mtime"])
-    return h.iloc[-1]["総合利益度"]
+# def find_prev_total(history: pd.DataFrame, horse_name: str, cur_date: int, cur_mtime: float, cur_file: str):
+#     h = history[
+#         (history["馬名"] == horse_name) &
+#         (history["__file"] != cur_file)
+#     ]
+#     if h.empty:
+#         return np.nan
+#     h = h[
+#         (h["__date"] < cur_date) |
+#         ((h["__date"] == cur_date) & (h["__mtime"] < cur_mtime))
+#     ]
+#     if h.empty:
+#         return np.nan
+#     h = h.sort_values(["__date", "__mtime"])
+#     return h.iloc[-1]["総合利益度"]
 
 def add_component_pass_count_local(d: pd.DataFrame) -> pd.DataFrame:
     """騎手/調教師/種牡馬の利益度が>=0のカテゴリ数(0-3)を付与"""

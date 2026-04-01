@@ -6,6 +6,8 @@ import pandas as pd
 import streamlit as st
 
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions
+from core.history import build_prof_history
+from core.loaders import load_preprocessed_for_race, load_csv
 
 DATA_DIR = Path(".", "prof_result")  # 指定フォルダ（自動読み込み）
 KAKO_DIR = Path(".", "kako_data")    # 過去レースのCSVがあれば（任意）
@@ -25,86 +27,86 @@ RESULT_COLS = [
     "馬連配当",
 ]
 
-# --------------------------------------
-# prof_result 全CSVから「前走総合利益度」を引くための履歴テーブル
-# --------------------------------------
-@st.cache_data(show_spinner="📚 prof_result 履歴を整備しています…")
-def build_prof_history(data_dir_str: str) -> pd.DataFrame:
-    data_dir = Path(data_dir_str)
-    files = sorted([p for p in data_dir.rglob("*.csv") if p.is_file()])
-    rows = []
-    for p in files:
-        date_int = extract_yyyymmdd_from_name(p.name)
-        if date_int is None:
-            continue
-        mtime = p.stat().st_mtime    # 「日時」に近い情報として更新時刻を併用
-        try:
-            df0 = pd.read_csv(str(p), encoding="cp932")
-        except Exception:
-            # 文字コード差分がある場合に備えて最低限
-            df0 = pd.read_csv(str(p), encoding="cp932", errors="ignore")
+# # --------------------------------------
+# # prof_result 全CSVから「前走総合利益度」を引くための履歴テーブル
+# # --------------------------------------
+# @st.cache_data(show_spinner="📚 prof_result 履歴を整備しています…")
+# def build_prof_history(data_dir_str: str) -> pd.DataFrame:
+#     data_dir = Path(data_dir_str)
+#     files = sorted([p for p in data_dir.rglob("*.csv") if p.is_file()])
+#     rows = []
+#     for p in files:
+#         date_int = extract_yyyymmdd_from_name(p.name)
+#         if date_int is None:
+#             continue
+#         mtime = p.stat().st_mtime    # 「日時」に近い情報として更新時刻を併用
+#         try:
+#             df0 = pd.read_csv(str(p), encoding="cp932")
+#         except Exception:
+#             # 文字コード差分がある場合に備えて最低限
+#             df0 = pd.read_csv(str(p), encoding="cp932", errors="ignore")
         
-        if "馬名" not in df0.columns or "総合利益度" not in df0.columns:
-            continue
+#         if "馬名" not in df0.columns or "総合利益度" not in df0.columns:
+#             continue
 
-        # 必要最低限の列に絞る（無い列は落ちないように）
-        keep = [c for c in ["場所", "R", "馬番", "馬名", "総合利益度"] if c in df0.columns]
-        df1 = df0[keep].copy()
-        df1["__date"] = int(date_int)
-        df1["__mtime"] = float(mtime)
-        df1["__file"] = p.name
+#         # 必要最低限の列に絞る（無い列は落ちないように）
+#         keep = [c for c in ["場所", "R", "馬番", "馬名", "総合利益度"] if c in df0.columns]
+#         df1 = df0[keep].copy()
+#         df1["__date"] = int(date_int)
+#         df1["__mtime"] = float(mtime)
+#         df1["__file"] = p.name
 
-        # 型を整える
-        if "R" in df1.columns:
-            df1["R"] = pd.to_numeric(df1["R"], errors="coerce")
-        if "馬番" in df1.columns:
-            df1["馬番"] = pd.to_numeric(df1["馬番"], errors="coerce")
-        df1["総合利益度"] = pd.to_numeric(df1["総合利益度"], errors="coerce")
-        df1["馬名"] = df1["馬名"].astype(str)
+#         # 型を整える
+#         if "R" in df1.columns:
+#             df1["R"] = pd.to_numeric(df1["R"], errors="coerce")
+#         if "馬番" in df1.columns:
+#             df1["馬番"] = pd.to_numeric(df1["馬番"], errors="coerce")
+#         df1["総合利益度"] = pd.to_numeric(df1["総合利益度"], errors="coerce")
+#         df1["馬名"] = df1["馬名"].astype(str)
 
-        rows.append(df1)
+#         rows.append(df1)
     
-    if not rows:
-        return pd.DataFrame(columns=["馬名", "総合利益度", "__date", "__mtime", "__file"])
+#     if not rows:
+#         return pd.DataFrame(columns=["馬名", "総合利益度", "__date", "__mtime", "__file"])
     
-    hist = pd.concat(rows, ignore_index=True)
-    # 馬名が空の行は除外
-    hist = hist[hist["馬名"].notna() & (hist["馬名"].astype(str).str.strip() != "")]
-    return hist
+#     hist = pd.concat(rows, ignore_index=True)
+#     # 馬名が空の行は除外
+#     hist = hist[hist["馬名"].notna() & (hist["馬名"].astype(str).str.strip() != "")]
+#     return hist
 
-@st.cache_data(show_spinner="📥 preprocessed_data 読み込み中…")
-def load_preprocessed_for_race(prep_dir: Path, target_date: int) -> pd.DataFrame:
-    files = sorted(prep_dir.rglob("preprocessed_data_*.csv"))
-    rows = []
+# @st.cache_data(show_spinner="📥 preprocessed_data 読み込み中…")
+# def load_preprocessed_for_race(prep_dir: Path, target_date: int) -> pd.DataFrame:
+#     files = sorted(prep_dir.rglob("preprocessed_data_*.csv"))
+#     rows = []
 
-    for p in files:
-        d = extract_yyyymmdd_from_name(p.name)
-        if d != target_date:
-            continue
+#     for p in files:
+#         d = extract_yyyymmdd_from_name(p.name)
+#         if d != target_date:
+#             continue
 
-        df0 = pd.read_csv(p, encoding="utf-8")
-        df0.columns = [str(c).strip() for c in df0.columns]
+#         df0 = pd.read_csv(p, encoding="utf-8")
+#         df0.columns = [str(c).strip() for c in df0.columns]
 
-        if not {"場所", "R", "レースレベル"}.issubset(df0.columns):
-            continue
+#         if not {"場所", "R", "レースレベル"}.issubset(df0.columns):
+#             continue
 
-        tmp = df0[["場所", "R", "レースレベル"]].copy()
-        tmp["開催日"] = d
+#         tmp = df0[["場所", "R", "レースレベル"]].copy()
+#         tmp["開催日"] = d
 
-        tmp["場所"] = (
-            tmp["場所"].astype(str)
-            .str.replace("\u3000", " ")
-            .str.strip()
-        )
-        tmp["R"] = pd.to_numeric(tmp["R"], errors="coerce")
-        tmp["レースレベル"] = tmp["レースレベル"].astype(str).str.strip()
+#         tmp["場所"] = (
+#             tmp["場所"].astype(str)
+#             .str.replace("\u3000", " ")
+#             .str.strip()
+#         )
+#         tmp["R"] = pd.to_numeric(tmp["R"], errors="coerce")
+#         tmp["レースレベル"] = tmp["レースレベル"].astype(str).str.strip()
 
-        rows.append(tmp)
+#         rows.append(tmp)
 
-    if not rows:
-        return pd.DataFrame(columns=["開催日", "場所", "R", "レースレベル"])
+#     if not rows:
+#         return pd.DataFrame(columns=["開催日", "場所", "R", "レースレベル"])
 
-    return pd.concat(rows, ignore_index=True)
+#     return pd.concat(rows, ignore_index=True)
 
 
 # クエリパラメータから開催/Rを取得
@@ -202,13 +204,13 @@ def pick_latest_by_filename(files: list[Path]) -> Path | None:
     dated.sort(key=lambda x: (x[0], x[1].name))
     return dated[-1][1]
 
-# --------------------------------------------
-# 2) CSV読み込み（キャッシュ）
-# --------------------------------------------
-@st.cache_data(show_spinner="📥 CSVを読み込んでいます…")
-def load_csv(path_str: str) -> pd.DataFrame:
-    df = pd.read_csv(path_str, encoding="cp932")
-    return df
+# # --------------------------------------------
+# # 2) CSV読み込み（キャッシュ）
+# # --------------------------------------------
+# @st.cache_data(show_spinner="📥 CSVを読み込んでいます…")
+# def load_csv(path_str: str) -> pd.DataFrame:
+#     df = pd.read_csv(path_str, encoding="cp932")
+#     return df
 
 # ---------------------------
 # 3) 型整形・欠損整備
