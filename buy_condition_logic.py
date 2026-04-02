@@ -157,14 +157,25 @@ def race_badge_from_horses(df_with_judgement: pd.DataFrame) -> str:
       - 同一馬が 単勝✅ かつ 複勝✅ → ✅
       - 単勝✅ が1頭以上 → 🅰️
       - 複勝✅ が1頭以上 → 🅱️
-      - それ以外（△のみ/なし） → ""（表示なし）
+      - 条件付き（単勝/複勝） → ☑️
+      - それ以外（なし） → ""（表示なし）
     """
     if df_with_judgement is None or df_with_judgement.empty:
         return ""
 
-    both_same = ((df_with_judgement["単勝_条件"] == "✅") & (df_with_judgement["複勝_条件"] == "✅")).any()
+    both_same = (
+        (df_with_judgement["単勝_条件"] == "✅") &
+        (df_with_judgement["複勝_条件"] == "✅")
+    ).any()
     if both_same:
         return " ✅"
+
+    has_conditional = (
+        (df_with_judgement["単勝_条件"] == "△") |
+        (df_with_judgement["複勝_条件"] == "△")
+    ).any()
+    if has_conditional:
+        return " ☑️"
 
     has_win = (df_with_judgement["単勝_条件"] == "✅").any()
     has_plc = (df_with_judgement["複勝_条件"] == "✅").any()

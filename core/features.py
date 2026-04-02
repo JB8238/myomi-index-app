@@ -1,10 +1,5 @@
 import pandas as pd
 import numpy as np
-import streamlit as st
-from pathlib import Path
-import re
-import io
-from datetime import datetime
 
 
 def add_component_pass_count(df_in: pd.DataFrame) -> pd.DataFrame:
@@ -52,3 +47,62 @@ def add_race_cv(df_in: pd.DataFrame) -> pd.DataFrame:
 
     cv_map = d.groupby(key, observed=True).apply(_cv).rename("cv").reset_index()
     return d.merge(cv_map, on=key, how="left")
+
+def add_race_cv_local(d: pd.DataFrame) -> pd.DataFrame:
+    """単一レース用：総合利益度からcv(std/mean)を計算して全行に付与"""
+    x = d.copy()
+    if "総合利益度" not in x.columns:
+        x["cv"] = np.nan
+        return x
+    vals = pd.to_numeric(x["総合利益度"], errors="coerce").dropna().to_numpy()
+    if len(vals) == 0:
+        x["cv"] = np.nan
+        return x
+    mean = float(np.mean(vals))
+    std = float(np.std(vals, ddof=0)) if len(vals) >= 2 else 0.0
+    x["cv"] = float(std / mean) if mean != 0 else np.nan
+    return x
+
+def add_race_deviation_scores(df: pd.DataFrame) -> pd.DataFrame:
+    d = df.copy()
+    key = ["開催日", "場所", "R"]
+
+    targets = {
+        "総合利益度": "総合偏差値",
+        "騎手利益度": "騎手偏差値",
+        "種牡馬利益度": "種牡馬偏差値",
+        "調教師利益度": "調教師偏差値",
+    }
+
+    for src, dst in targets.items():
+        d[src] = pd.to_numeric(d.get(src), errors="coerce")
+
+        def _dev(g):
+            x = g[src]
+            mu = x.mean()
+            sd = x.std(ddof=0)
+            if pd.isna(sd) or sd == 0:
+                return pd.Series(50.0, index=g.index)
+            return 50 + 10 * (x - mu) / sd
+
+        d[dst] = d.groupby(key, observed=True).apply(_dev).reset_index(level=key, drop=True)
+
+    return d
+
+def add_deviation_component_pass(df: pd.DataFrame, threshold: float = 60.0) -> pd.DataFrame:
+    d = df.copy()
+
+    cols = ["騎手偏差値", "種牡馬偏差値", "調教師偏差値"]
+    cnt = 0
+    for c in cols:
+        if c in d.columns:
+            cnt += (pd.to_numeric(d[c], errors="coerce") >= threshold).astype(int)
+
+    d["偏差値合格数"] = cnt
+    d["偏差値合格数区分"] = d["偏差値合格数"].map({
+        0: "0/3",
+        1: "1/3",
+        2: "2/3",
+        3: "3/3",
+    })
+    return d

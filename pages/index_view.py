@@ -6,12 +6,12 @@ import pandas as pd
 import streamlit as st
 
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions
+from core.features import add_component_pass_count, add_race_cv_local, add_race_deviation_scores, add_deviation_component_pass
 from core.history import build_prof_history
-from core.loaders import load_preprocessed_for_race, load_csv
+from core.loaders import load_preprocessed_for_race, load_csv, normalize_df
 
-DATA_DIR = Path(".", "prof_result")  # 指定フォルダ（自動読み込み）
-KAKO_DIR = Path(".", "kako_data")    # 過去レースのCSVがあれば（任意）
-PREP_DIR = Path(".", "data")
+DATA_DIR = Path("prof_result")  # 指定フォルダ（自動読み込み）
+PREP_DIR = Path("data")
 MERGED_RETURN_PATH = Path("./data/return_data_merged.csv")
 BUY_WIN_FULL_PATH = Path("./data/buy_conditions_full_win.csv")
 BUY_PLC_FULL_PATH = Path("./data/buy_conditions_full_place.csv")
@@ -26,87 +26,6 @@ RESULT_COLS = [
     "的中種別",
     "馬連配当",
 ]
-
-# # --------------------------------------
-# # prof_result 全CSVから「前走総合利益度」を引くための履歴テーブル
-# # --------------------------------------
-# @st.cache_data(show_spinner="📚 prof_result 履歴を整備しています…")
-# def build_prof_history(data_dir_str: str) -> pd.DataFrame:
-#     data_dir = Path(data_dir_str)
-#     files = sorted([p for p in data_dir.rglob("*.csv") if p.is_file()])
-#     rows = []
-#     for p in files:
-#         date_int = extract_yyyymmdd_from_name(p.name)
-#         if date_int is None:
-#             continue
-#         mtime = p.stat().st_mtime    # 「日時」に近い情報として更新時刻を併用
-#         try:
-#             df0 = pd.read_csv(str(p), encoding="cp932")
-#         except Exception:
-#             # 文字コード差分がある場合に備えて最低限
-#             df0 = pd.read_csv(str(p), encoding="cp932", errors="ignore")
-        
-#         if "馬名" not in df0.columns or "総合利益度" not in df0.columns:
-#             continue
-
-#         # 必要最低限の列に絞る（無い列は落ちないように）
-#         keep = [c for c in ["場所", "R", "馬番", "馬名", "総合利益度"] if c in df0.columns]
-#         df1 = df0[keep].copy()
-#         df1["__date"] = int(date_int)
-#         df1["__mtime"] = float(mtime)
-#         df1["__file"] = p.name
-
-#         # 型を整える
-#         if "R" in df1.columns:
-#             df1["R"] = pd.to_numeric(df1["R"], errors="coerce")
-#         if "馬番" in df1.columns:
-#             df1["馬番"] = pd.to_numeric(df1["馬番"], errors="coerce")
-#         df1["総合利益度"] = pd.to_numeric(df1["総合利益度"], errors="coerce")
-#         df1["馬名"] = df1["馬名"].astype(str)
-
-#         rows.append(df1)
-    
-#     if not rows:
-#         return pd.DataFrame(columns=["馬名", "総合利益度", "__date", "__mtime", "__file"])
-    
-#     hist = pd.concat(rows, ignore_index=True)
-#     # 馬名が空の行は除外
-#     hist = hist[hist["馬名"].notna() & (hist["馬名"].astype(str).str.strip() != "")]
-#     return hist
-
-# @st.cache_data(show_spinner="📥 preprocessed_data 読み込み中…")
-# def load_preprocessed_for_race(prep_dir: Path, target_date: int) -> pd.DataFrame:
-#     files = sorted(prep_dir.rglob("preprocessed_data_*.csv"))
-#     rows = []
-
-#     for p in files:
-#         d = extract_yyyymmdd_from_name(p.name)
-#         if d != target_date:
-#             continue
-
-#         df0 = pd.read_csv(p, encoding="utf-8")
-#         df0.columns = [str(c).strip() for c in df0.columns]
-
-#         if not {"場所", "R", "レースレベル"}.issubset(df0.columns):
-#             continue
-
-#         tmp = df0[["場所", "R", "レースレベル"]].copy()
-#         tmp["開催日"] = d
-
-#         tmp["場所"] = (
-#             tmp["場所"].astype(str)
-#             .str.replace("\u3000", " ")
-#             .str.strip()
-#         )
-#         tmp["R"] = pd.to_numeric(tmp["R"], errors="coerce")
-#         tmp["レースレベル"] = tmp["レースレベル"].astype(str).str.strip()
-
-#         rows.append(tmp)
-
-#     if not rows:
-#         return pd.DataFrame(columns=["開催日", "場所", "R", "レースレベル"])
-
-#     return pd.concat(rows, ignore_index=True)
 
 
 # クエリパラメータから開催/Rを取得
@@ -149,35 +68,6 @@ def list_csv_files(data_dir) -> list:
     """指定フォルダ内のCSVファイルをリストアップ"""
     return sorted([p for p in data_dir.rglob("*.csv") if p.is_file()])
 
-def pick_latest_kako_csv(kako_dir: Path, target_date: int | None = None) -> Path | None:
-    """kako_data_YYYYMMDD.csv を探し、target_date一致を優先、なければ日付最大を返す"""
-    files = sorted([p for p in kako_dir.rglob("kako_data_*.csv") if p.is_file()])
-    if not files:
-        return None
-    dated = []
-    for f in files:
-        d = extract_yyyymmdd_from_name(f.name)
-        if d is not None:
-            dated.append((d, f))
-    if not dated:
-        return None
-    if target_date is not None:
-        same = [t for t in dated if t[0] == target_date]
-        if same:
-            same.sort(key=lambda x: x[1].name)
-            return same[-1][1]
-    dated.sort(key=lambda x: (x[0], x[1].name))
-    return dated[-1][1]
-
-@st.cache_data(show_spinner="📥 kako_data を読み込んでいます…")
-def load_kako_csv(path_str: str) -> pd.DataFrame:
-    for enc in ("cp932", "utf-8-sig", "utf-8"):
-        try:
-            return pd.read_csv(path_str, header=None, encoding=enc)
-        except UnicodeDecodeError:
-            continue
-    return pd.read_csv(path_str, header=None, encoding="cp932", errors="ignore")
-
 def compute_prev_total(df: pd.DataFrame) -> pd.Series:
     block = df.iloc[:, 34:37].apply(pd.to_numeric, errors="coerce")
     return block.sum(axis=1, min_count=1)
@@ -204,34 +94,8 @@ def pick_latest_by_filename(files: list[Path]) -> Path | None:
     dated.sort(key=lambda x: (x[0], x[1].name))
     return dated[-1][1]
 
-# # --------------------------------------------
-# # 2) CSV読み込み（キャッシュ）
-# # --------------------------------------------
-# @st.cache_data(show_spinner="📥 CSVを読み込んでいます…")
-# def load_csv(path_str: str) -> pd.DataFrame:
-#     df = pd.read_csv(path_str, encoding="cp932")
-#     return df
-
 # ---------------------------
-# 3) 型整形・欠損整備
-# ---------------------------
-def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [c.strip() for c in df.columns]
-    num_cols = [
-        "R", "馬番",
-        "騎手利益度", "騎手利益度順位",
-        "種牡馬利益度", "種牡馬利益度順位",
-        "調教師利益度", "調教師利益度順位",
-        "総合利益度", "総合利益度順位",
-    ]
-    for c in num_cols:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    return df
-
-# ---------------------------
-# 4) フィルタ
+# フィルタ
 # ---------------------------
 def apply_filters(
     df: pd.DataFrame,
@@ -252,40 +116,6 @@ def apply_filters(
         else:
             out = out[out["総合利益度"].notna() & (out["総合利益度"] >= pass_threshold)]
     return out
-
-def add_component_pass_count_local(d: pd.DataFrame) -> pd.DataFrame:
-    """騎手/調教師/種牡馬の利益度が>=0のカテゴリ数(0-3)を付与"""
-    x = d.copy()
-    def _ok(v): return pd.notna(v) and v >= 0
-    cnt = 0
-    for col in ["騎手利益度", "調教師利益度", "種牡馬利益度"]:
-        if col in x.columns:
-            x[col] = pd.to_numeric(x[col], errors="coerce")
-            cnt += x[col].apply(_ok).astype(int)
-    x["コンポーネント合格数"] = cnt
-    x["合格数区分"] = x["コンポーネント合格数"].map({
-        0: "0/3（全弱）",
-        1: "1/3（片輪）",
-        2: "2/3（概ね良）",
-        3: "3/3（万全）",
-    })
-    return x
-
-def add_race_cv_local(d: pd.DataFrame) -> pd.DataFrame:
-    """単一レース（この画面）用：総合利益度からcv(std/mean)を計算して全行に付与"""
-    x = d.copy()
-    if "総合利益度" not in x.columns:
-        x["cv"] = np.nan
-        return x
-    vals = pd.to_numeric(x["総合利益度"], errors="coerce").dropna().to_numpy()
-    if len(vals) == 0:
-        x["cv"] = np.nan
-        return x
-    mean = float(np.mean(vals))
-    std = float(np.std(vals, ddof=0)) if len(vals) >= 2 else 0.0
-    x["cv"] = float(std / mean) if mean != 0 else np.nan
-    return x
-    
 
 
 # ---------------------------
@@ -409,14 +239,6 @@ df = normalize_df(df_raw)
 # --- レース日（prof_result側のファイル名日付）を取得し、kako_dataもそれに合わせる ---
 race_date = extract_yyyymmdd_from_name(Path(selected_file).name)
 
-# --- kako_data 読み込み（リポジトリ内の kako_data/ を参照） ---
-df_kako = None
-kako_path = None
-if KAKO_DIR.exists():
-    kako_path = pick_latest_kako_csv(KAKO_DIR, target_date=race_date)
-    if kako_path is not None:
-        df_kako = load_kako_csv(str(kako_path))
-
 # --- return_data 読み込み（結果CSV） ---
 df_return = None
 if MERGED_RETURN_PATH.exists():
@@ -490,6 +312,10 @@ if df_return is not None:
         return "-"
     
     df["的中種別"] = df.apply(_hit_label, axis=1)
+
+# 偏差値情報の付与
+df = add_race_deviation_scores(df)
+df = add_deviation_component_pass(df, threshold=60)
 
 # --- Home上部：クイック操作 ---
 places = sorted(df["場所"].dropna().unique().tolist()) if "場所" in df.columns else []
@@ -618,7 +444,7 @@ else:
 if race_level:
     filtered = filtered.copy()
     # 前提条件 (cv & 合格数) のための列を付与
-    filtered = add_component_pass_count_local(filtered)
+    filtered = add_component_pass_count(filtered)
     filtered = add_race_cv_local(filtered)
     filtered = apply_buy_conditions(filtered, race_level, cond_win, cond_plc)
 

@@ -3,7 +3,6 @@ import numpy as np
 import streamlit as st
 from pathlib import Path
 import re
-import io
 from datetime import datetime
 
 
@@ -122,4 +121,22 @@ def load_preprocessed_for_race(prep_dir: Path, target_date: int) -> pd.DataFrame
 @st.cache_data(show_spinner="📥 CSVを読み込んでいます…")
 def load_csv(path_str: str) -> pd.DataFrame:
     df = pd.read_csv(path_str, encoding="cp932")
+    return df
+
+# ---------------------------
+# 型整形・欠損整備
+# ---------------------------
+def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [c.strip() for c in df.columns]
+    num_cols = [
+        "R", "馬番",
+        "騎手利益度", "騎手利益度順位",
+        "種牡馬利益度", "種牡馬利益度順位",
+        "調教師利益度", "調教師利益度順位",
+        "総合利益度", "総合利益度順位",
+    ]
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
     return df

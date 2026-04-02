@@ -6,10 +6,17 @@ import re
 import io
 from datetime import datetime
 
-from core.features import add_component_pass_count, add_race_cv
+from core.features import add_component_pass_count, add_race_cv, add_race_deviation_scores, add_deviation_component_pass
 from core.history import build_index_history, attach_prev_total
 from core.loaders import load_preprocessed, load_return
-from core.aggregations import calc_roi_table, make_heatmap_table, build_condition_cells, extract_buy_conditions_win, extract_buy_conditions_place
+from core.aggregations import (
+    calc_roi_table,
+    make_heatmap_table,
+    build_condition_cells,
+    extract_buy_conditions_win,
+    extract_buy_conditions_place,
+    add_stability_flags,
+)
 
 # =========================================================
 # 設定
@@ -20,16 +27,6 @@ MERGED_RETURN_PATH = Path("./data/return_data_merged.csv")
 BUY_WIN_FULL_PATH = Path("./data/buy_conditions_full_win.csv")
 BUY_PLC_FULL_PATH = Path("./data/buy_conditions_full_place.csv")
 
-
-# RESULT_COLS = [
-#     "人気",
-#     "単オッズ",
-#     "複勝オッズ下",
-#     "上",
-#     "単勝",
-#     "複勝",
-#     "馬連配当",
-# ]
 
 st.set_page_config(page_title="指数分析", page_icon="📈", layout="wide")
 st.title("📈 指数分析ページ")
@@ -64,39 +61,6 @@ def extract_yyyymmdd_from_name(filename: str) -> int | None:
 def list_results_index_files(data_dir: Path):
     return sorted([p for p in data_dir.rglob("results_prof_index_*.csv") if p.is_file()])
 
-# def list_preprocessed_files(data_dir: Path):
-#     return sorted([p for p in data_dir.rglob("preprocessed_data_*.csv") if p.is_file()])
-
-# @st.cache_data(show_spinner="📥 preprocessed_data 読み込み中…")
-# def load_preprocessed(data_dir: Path) -> pd.DataFrame:
-#     rows = []
-#     for p in list_preprocessed_files(data_dir):
-#         d = extract_yyyymmdd_from_name(p.name)
-#         if d is None:
-#             continue
-
-#         df0 = pd.read_csv(p, encoding="utf-8")
-#         df0.columns = [str(c).strip() for c in df0.columns]
-
-#         if not {"場所", "R", "馬番", "レースレベル"}.issubset(df0.columns):
-#             continue
-
-#         tmp = df0[["場所", "R", "馬番", "レースレベル"]].copy()
-#         tmp["開催日"] = d
-
-#         # 正規化
-#         tmp["場所"] = tmp["場所"].astype(str).str.replace("\u3000", " ").str.strip()
-#         tmp["レースレベル"] = tmp["レースレベル"].astype(str).str.strip()
-
-#         tmp["R"] = pd.to_numeric(tmp["R"], errors="coerce")
-#         tmp["馬番"] = pd.to_numeric(tmp["馬番"], errors="coerce")
-
-#         rows.append(tmp)
-
-#     if not rows:
-#         return pd.DataFrame(columns=["開催日", "場所", "R", "馬番", "レースレベル"])
-
-#     return pd.concat(rows, ignore_index=True)
 
 @st.cache_data(show_spinner="📥 results_prof_index 読み込み中…")
 def load_prof(path: Path) -> pd.DataFrame:
@@ -114,31 +78,6 @@ def load_prof(path: Path) -> pd.DataFrame:
 
     return df
 
-
-# @st.cache_data(show_spinner="📥 return_data 読み込み中…")
-# def load_return(path: Path) -> pd.DataFrame:
-#     df = pd.read_csv(path, encoding="utf-8-sig")
-#     df.columns = [str(c).strip() for c in df.columns]
-
-#     df.rename(columns={"Ｒ": "R"}, inplace=True)
-
-#     keep = [c for c in ["開催日", "場所", "R", "馬番"] + RESULT_COLS if c in df.columns]
-#     df = df[keep].copy()
-
-#     for c in ["開催日", "R", "馬番"]:
-#         if c in df.columns:
-#             df[c] = pd.to_numeric(df[c], errors="coerce")
-
-#     for c in RESULT_COLS:
-#         if c in df.columns:
-#             df[c] = pd.to_numeric(df[c], errors="coerce")
-
-#     if "場所" in df.columns:
-#         df["場所"] = df["場所"].astype(str).str.replace("\u3000", " ").str.strip()
-
-#     return df
-
-
 def add_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
@@ -151,52 +90,6 @@ def add_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
         out["人気乖離"] = np.nan
 
     return out
-
-
-# @st.cache_data(show_spinner="📚 指数履歴を構築中…")
-# def build_index_history(data_dir: Path) -> pd.DataFrame:
-#     rows = []
-#     for p in list_results_index_files(data_dir):
-#         d = extract_yyyymmdd_from_name(p.name)
-#         if d is None:
-#             continue
-
-#         df0 = pd.read_csv(p, encoding="cp932")
-#         df0.columns = [str(c).strip() for c in df0.columns]
-#         if not {"馬名", "総合利益度"}.issubset(df0.columns):
-#             continue
-
-#         tmp = df0[["馬名", "総合利益度"]].copy()
-#         tmp["馬名"] = tmp["馬名"].astype(str).str.replace("\u3000", " ").str.strip()
-#         tmp["総合利益度"] = pd.to_numeric(tmp["総合利益度"], errors="coerce")
-#         tmp["開催日"] = d
-#         rows.append(tmp)
-
-#     if not rows:
-#         return pd.DataFrame(columns=["馬名", "総合利益度", "開催日"])
-
-#     return pd.concat(rows, ignore_index=True)
-
-
-# def attach_prev_total(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
-#     cur = df.copy()
-#     cur["開催日"] = pd.to_numeric(cur["開催日"], errors="coerce")
-
-#     hist2 = hist.rename(columns={"総合利益度": "前走総合利益度"}).copy()
-#     hist2["開催日"] = pd.to_numeric(hist2["開催日"], errors="coerce")
-
-#     # ★ merge_asof のために onキー最優先でソート
-#     cur = cur.sort_values(["開催日", "馬名"])
-#     hist2 = hist2.sort_values(["開催日", "馬名"])
-
-#     return pd.merge_asof(
-#         cur,
-#         hist2,
-#         by="馬名",
-#         on="開催日",
-#         direction="backward",
-#         allow_exact_matches=False,
-#     )
 
 def make_bin_bounds(bins: list[float], labels: list[str], key_name: str) -> pd.DataFrame:
     """
@@ -257,52 +150,6 @@ def calc_race_competitiveness(df_in: pd.DataFrame) -> pd.DataFrame:
 
     out = x.groupby(key, observed=True).apply(_agg).reset_index()
     return out
-
-# def add_component_pass_count(df_in: pd.DataFrame) -> pd.DataFrame:
-#     """
-#     総合利益度>=0の馬について、
-#     騎手/調教師/種牡馬 利益度が >=0 のカテゴリ数を数える
-#     """
-#     d = df_in.copy()
-
-#     def _ok(x):
-#         return pd.notna(x) and x >= 0
-
-#     cnt = 0
-#     for col in ["騎手利益度", "調教師利益度", "種牡馬利益度"]:
-#         if col in d.columns:
-#             d[col] = pd.to_numeric(d[col], errors="coerce")
-#             cnt += d[col].apply(_ok).astype(int)
-
-#     d["コンポーネント合格数"] = cnt
-#     d["合格数区分"] = d["コンポーネント合格数"].map({
-#         0: "0/3（全弱）",
-#         1: "1/3（片輪）",
-#         2: "2/3（概ね良）",
-#         3: "3/3（万全）",
-#     })
-#     return d
-
-# def add_race_cv(df_in: pd.DataFrame) -> pd.DataFrame:
-#     """レース単位のcv (std/mean) を計算して全行に付与"""
-#     d = df_in.copy()
-#     key = ["開催日", "場所", "R"]
-#     if not set(key).issubset(d.columns) or "総合利益度" not in d.columns:
-#         d["cv"] = np.nan
-#         return d
-
-#     d["総合利益度"] = pd.to_numeric(d["総合利益度"], errors="coerce")
-
-#     def _cv(g: pd.DataFrame) -> float:
-#         vals = g["総合利益度"].dropna().to_numpy()
-#         if len(vals) == 0:
-#             return np.nan
-#         mean = float(np.mean(vals))
-#         std = float(np.std(vals, ddof=0)) if len(vals) >= 2 else 0.0
-#         return float(std / mean) if mean != 0 else np.nan
-
-#     cv_map = d.groupby(key, observed=True).apply(_cv).rename("cv").reset_index()
-#     return d.merge(cv_map, on=key, how="left")
 
 
 # =========================================================
@@ -402,6 +249,11 @@ df["利益度上昇値"] = (
 
 df = add_derived_columns(df)
 
+# 偏差値情報の付与
+df = add_race_deviation_scores(df)
+df = add_deviation_component_pass(df, threshold=60)
+
+
 with st.sidebar:
     st.subheader("レースレベル（Lv）")
     
@@ -474,38 +326,6 @@ with st.sidebar:
     )
 
 
-# # =========================================================
-# # 分析表示（回収率/的中率）
-# # =========================================================
-# def calc_roi_table(src: pd.DataFrame, group_col: str) -> pd.DataFrame:
-#     """
-#     回収率は「外れ=0円」で平均（単勝/複勝は100円あたりの払戻円を想定）
-#     的中率は bool の平均（%表示用に×100）
-#     """
-#     d = src.copy()
-#     # 外れ（NaN）を 0 として回収率計算
-#     d["単勝_回収"] = pd.to_numeric(d.get("単勝"), errors="coerce").fillna(0)
-#     d["複勝_回収"] = pd.to_numeric(d.get("複勝"), errors="coerce").fillna(0)
-
-#     out = (
-#         d.groupby(group_col, observed=True)
-#         .agg(
-#             頭数=("馬名", "count") if "馬名" in d.columns else ("馬番", "count"),
-#             単勝的中率=("単勝的中", "mean"),
-#             複勝的中率=("複勝的中", "mean"),
-#             単勝回収率=("単勝_回収", "mean"),
-#             複勝回収率=("複勝_回収", "mean"),
-#         )
-#         .reset_index()
-#     )
-
-#     # 表示用（%）
-#     out["単勝的中率"] = out["単勝的中率"] * 100
-#     out["複勝的中率"] = out["複勝的中率"] * 100
-#     # 単勝回収率/複勝回収率は「円/100円」なので数値=％相当（例: 95.2 → 95.2%）
-
-#     return out
-
 # ---- レースレベルによるフィルタリング ----
 df_filtered = df.copy()
 if selected_lv and "レースレベル" in df_filtered.columns:
@@ -526,7 +346,6 @@ st.caption(f"分析母集団: {population_mode}")
 # ---- レース単位の指数集中度/分散を付与 ----
 race_stats = calc_race_competitiveness(df_filtered)
 df_filtered = add_component_pass_count(df_filtered)
-# df_filtered = df_filtered.merge(race_stats, on=["開催日", "場所", "R"], how="left")
 df_filtered = add_race_cv(df_filtered)
 
 with st.sidebar:
@@ -588,14 +407,6 @@ if "総合利益度" in df_hm.columns:
     df_hm["指数値区分"] = pd.cut(r, bins=bins_index, labels=labels_index, include_lowest=True)
 else:
     df_hm["指数値区分"] = np.nan
-
-# df_hm["コンポーネント合格数"] = df_hm["コンポーネント合格数"].astype("Int64")
-# df_hm["合格数区分"] = df_hm["コンポーネント合格数"].map({
-#     0: "0/3（全弱）",
-#     1: "1/3（片輪）",
-#     2: "2/3（概ね良）",
-#     3: "3/3（万全）",
-# })
 
 if use_comp33 and "合格数区分" in df_hm.columns:
     df_hm = df_hm[df_hm["合格数区分"] == "3/3（万全）"]
@@ -686,7 +497,6 @@ pivot_win_index = x_index.pivot_table(index="指数値区分", columns="混戦�
 pivot_plc_index = x_index.pivot_table(index="指数値区分", columns="混戦度区分", values="複勝_回収", aggfunc="mean", observed=True)
 pivot_n_index = x_index.pivot_table(index="指数値区分", columns="混戦度区分", values="馬番" if "馬番" in x_index.columns else "馬名", aggfunc="count", observed=True, fill_value=0)
 
-# tab_index = st.radio("表示", ["単勝回収率", "複勝回収率", "件数"], horizontal=True)
 if tab == "単勝回収率":
     st.dataframe(pivot_win_index.style.format("{:.1f}%"), use_container_width=True)
 elif tab == "複勝回収率":
@@ -697,62 +507,6 @@ else:
 # この後のヒートマップ描画は区分が両方揃っている行のみを対象
 df_hm = df_hm.dropna(subset=["上昇値区分", "人気乖離区分"])
 
-# # =========================================================
-# # ヒートマップによる集計
-# # =========================================================
-# def make_heatmap_table(d: pd.DataFrame, value_col: str) -> pd.DataFrame:
-#     """
-#     value_col:
-#         - '単勝ROI' / '複勝ROI' / '単勝的中率' / '複勝的中率' / '件数'
-#     """
-#     x = d.copy()
-
-#     # 区分列が無い時は落ちないように
-#     if "上昇値区分" not in x.columns or "人気乖離区分" not in x.columns:
-#         return pd.DataFrame()
-
-#     # ROI用に「外れ=0」を作る（NaNの平均を避ける）
-#     x["単勝_回収"] = pd.to_numeric(x.get("単勝"), errors="coerce").fillna(0)
-#     x["複勝_回収"] = pd.to_numeric(x.get("複勝"), errors="coerce").fillna(0)
-
-#     pivot_count = x.pivot_table(
-#         index="上昇値区分", columns="人気乖離区分",
-#         values="馬番" if "馬番" in x.columns else "馬名",
-#         aggfunc="count", fill_value=0, observed=True
-#     )
-
-#     pivot_win_roi = x.pivot_table(
-#         index="上昇値区分", columns="人気乖離区分",
-#         values="単勝_回収", aggfunc="mean", observed=True
-#     )
-
-#     pivot_plc_roi = x.pivot_table(
-#         index="上昇値区分", columns="人気乖離区分",
-#         values="複勝_回収", aggfunc="mean", observed=True
-#     )
-
-#     pivot_win_hit = x.pivot_table(
-#         index="上昇値区分", columns="人気乖離区分",
-#         values="単勝的中", aggfunc="mean", observed=True
-#     ) * 100
-
-#     pivot_plc_hit = x.pivot_table(
-#         index="上昇値区分", columns="人気乖離区分",
-#         values="複勝的中", aggfunc="mean", observed=True
-#     ) * 100
-
-#     if value_col == "件数":
-#         return pivot_count
-#     if value_col == "単勝ROI":
-#         return pivot_win_roi
-#     if value_col == "複勝ROI":
-#         return pivot_plc_roi
-#     if value_col == "単勝的中率":
-#         return pivot_win_hit
-#     if value_col == "複勝的中率":
-#         return pivot_plc_hit
-
-#     return pd.DataFrame()
 
 st.header("④ コンポーネント合格数 × 回収率・的中率")
 
@@ -890,70 +644,6 @@ else:
     st.caption("※ サンプル数が少ないセル（件数<5）は薄く表示します。")
     st.dataframe(sty, use_container_width=True, height=480)
 
-# # =========================================================
-# # 買い条件自動抽出
-# # =========================================================
-# def build_condition_cells(df_hm: pd.DataFrame) -> pd.DataFrame:
-#     x = df_hm.copy()
-
-#     # ROI計算用（はずれ=0）
-#     x["単勝_回収"] = pd.to_numeric(x.get("単勝"), errors="coerce").fillna(0)
-#     x["複勝_回収"] = pd.to_numeric(x.get("複勝"), errors="coerce").fillna(0)
-
-#     agg = (
-#         x.groupby(
-#             ["レースレベル", "上昇値区分", "人気乖離区分"],
-#             observed=True
-#         )
-#         .agg(
-#             件数=("馬番", "count"),
-#             単勝ROI=("単勝_回収", "mean"),
-#             単勝的中率=("単勝的中", "mean"),
-#             複勝ROI=("複勝_回収", "mean"),
-#             複勝的中率=("複勝的中", "mean"),
-#         )
-#         .reset_index()
-#     )
-
-#     agg["単勝的中率"] = agg["単勝的中率"] * 100
-#     agg["複勝的中率"] = agg["複勝的中率"] * 100
-#     return agg
-
-# def extract_buy_conditions_win(
-#     cells: pd.DataFrame,
-#     min_roi: float = 110.0,
-#     min_n: int = 10
-# ) -> pd.DataFrame:
-#     out = cells[
-#         (cells["単勝ROI"] >= min_roi) &
-#         (cells["件数"] >= min_n)
-#     ].copy()
-
-#     # Lv → 上昇値 → 人気乖離 → ROI の順で見やすく
-#     out = out.sort_values(
-#         ["レースレベル", "単勝ROI", "件数"],
-#         ascending=[True, False, False]
-#     )
-
-#     return out
-
-# def extract_buy_conditions_place(
-#     cells: pd.DataFrame,
-#     min_roi: float = 105.0,
-#     min_n: int = 10
-# ) -> pd.DataFrame:
-#     out = cells[
-#         (cells["複勝ROI"] >= min_roi) &
-#         (cells["件数"] >= min_n)
-#     ].copy()
-
-#     # Lv → 上昇値 → 人気乖離 → ROI の順で見やすく
-#     out = out.sort_values(
-#         ["レースレベル", "複勝ROI", "件数"],
-#         ascending=[True, False, False]
-#     )
-
-#     return out
 
 st.divider()
 st.header("■ Lv別・自動抽出された買い条件")
@@ -971,6 +661,16 @@ buy_win = extract_buy_conditions_win(
 if buy_win.empty:
     st.info("単勝の買い条件は見つかりませんでした。")
 else:
+    # 期間分割検証（6:4）を付与
+    # ※ df_hm はすでに前提フィルタ（3/3 & cv上位）などがかかった母集団
+    buy_win = add_stability_flags(
+        cond_df=buy_win,
+        df_all=df_hm,
+        bet_type="win",
+        min_roi=float(win_min_roi),
+        min_n=int(win_min_n),
+        date_col="開催日",
+    )
     buy_win_disp = buy_win.copy()
     buy_win_disp["出力"] = False
 
@@ -980,6 +680,7 @@ else:
         hide_index=True,
         column_config={
             "出力": st.column_config.CheckboxColumn("CSV出力"),
+            "期間分割OK": st.column_config.CheckboxColumn("6:4検証OK"),
         },
         disabled=[
             c for c in buy_win_disp.columns if c != "出力"
@@ -997,6 +698,16 @@ buy_place = extract_buy_conditions_place(
 if buy_place.empty:
     st.info("複勝の買い条件は見つかりませんでした。")
 else:
+    # 期間分割検証（6:4）を付与
+    # ※ df_hm はすでに前提フィルタ（3/3 & cv上位）などがかかった母集団
+    buy_place = add_stability_flags(
+        cond_df=buy_place,
+        df_all=df_hm,
+        bet_type="place",
+        min_roi=float(plc_min_roi),
+        min_n=int(plc_min_n),
+        date_col="開催日",
+    )
     buy_place_disp = buy_place.copy()
     buy_place_disp["出力"] = False
 
@@ -1006,6 +717,7 @@ else:
         hide_index=True,
         column_config={
             "出力": st.column_config.CheckboxColumn("CSV出力"),
+            "期間分割OK": st.column_config.CheckboxColumn("6:4検証OK"),
         },
         disabled=[
             c for c in buy_place_disp.columns if c != "出力"
@@ -1018,9 +730,7 @@ else:
     )
 
 st.divider()
-# st.subheader("📤 買い条件CSVの手動生成")
 
-# if st.button("✅ 選択した条件をCSVに出力"):
 # 単勝
 win_sel = edited_win[edited_win["出力"]].drop(columns="出力", errors="ignore") \
     if "edited_win" in locals() else pd.DataFrame()
@@ -1089,8 +799,6 @@ if not plc_sel.empty:
     ):
         st.success("✅ 選択した複勝買い条件をCSVに出力しました")
 
-# st.success("✅ 選択した買い条件をCSVに出力しました")
-# st.caption(f"出力先: {BUY_WIN_FULL_PATH.name}, {BUY_PLC_FULL_PATH.name}")
 
 # =========================================================
 # デバッグ表示

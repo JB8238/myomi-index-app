@@ -8,6 +8,93 @@ from datetime import datetime
 
 
 # =========================================================
+# 期間分割検証（6:4）
+# =========================================================
+def split_dates_60_40(df: pd.DataFrame, date_col: str = "開催日") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    df を開催日で昇順に並べ、ユニーク開催日の前半60%をtrain、後半40%をtestに分割する
+    """
+    if date_col not in df.columns or df.empty:
+        return df.copy(), df.iloc[0:0].copy()
+    d = df.copy()
+    d[date_col] = pd.to_numeric(d[date_col], errors="coerce")
+    dates = sorted([x for x in d[date_col].dropna().unique().tolist()])
+    if not dates:
+        return d.copy(), d.iloc[0:0].copy()
+    cut = int(np.ceil(len(dates) * 0.6))
+    train_dates = set(dates[:cut])
+    test_dates = set(dates[cut:])
+    train = d[d[date_col].isin(train_dates)].copy()
+    test = d[d[date_col].isin(test_dates)].copy()
+    return train, test
+
+def eval_condition_row(df: pd.DataFrame, row: pd.Series, bet_type: str) -> tuple[int, float]:
+    """
+    条件行(row)に一致するdfのサブセットを作り、件数とROIを返す。
+    bet_type: "win" or "place"
+    """
+    x = df.copy()
+    # 必須キー
+    for k in ["レースレベル", "上昇値区分", "人気乖離区分"]:
+        if k in row.index and k in x.columns:
+            x = x[x[k].astype(str) == str(row[k])]
+    # 前提フィルタ（存在する場合のみ）
+    if "前提_合格数区分" in row.index and "合格数区分" in x.columns:
+        prereq = str(row["前提_合格数区分"]).strip()
+        if prereq and prereq != "ALL":
+            x = x[x["合格数区分"].astype(str) == prereq]
+    if "前提_cv閾値" in row.index and "cv" in x.columns:
+        th = pd.to_numeric(row["前提_cv閾値"], errors="coerce")
+        if pd.notna(th):
+            x = x[pd.to_numeric(x["cv"], errors="coerce") >= float(th)]
+
+    n = int(len(x))
+    if n == 0:
+        return 0, float("nan")
+
+    # ROI: はずれ=0の平均（単勝/複勝）
+    if bet_type == "win":
+        pay = pd.to_numeric(x.get("単勝"), errors="coerce").fillna(0)
+    else:
+        pay = pd.to_numeric(x.get("複勝"), errors="coerce").fillna(0)
+    roi = float(pay.mean())     # 100円あたり
+    return n, roi
+
+def add_stability_flags(
+    cond_df: pd.DataFrame,
+    df_all: pd.DataFrame,
+    bet_type: str,
+    min_roi: float,
+    min_n: int,
+    date_col: str = "開催日",
+) -> pd.DataFrame:
+    """
+    条件表(cond_df)の各行について、開催日6:4分割で検証OK/NGを付与して返す。
+    bet_type: "win" or "place"
+    """
+    if cond_df is None or cond_df.empty:
+        return cond_df
+
+    train, test = split_dates_60_40(df_all, date_col=date_col)
+
+    out = cond_df.copy()
+    train_n, train_roi, test_n, test_roi, ok = [], [], [], [], []
+    for _, r in out.iterrows():
+        n1, roi1 = eval_condition_row(train, r, bet_type)
+        n2, roi2 = eval_condition_row(test, r, bet_type)
+        train_n.append(n1); train_roi.append(roi1)
+        test_n.append(n2); test_roi.append(roi2)
+        ok.append((n1 >= min_n) and (n2 >= min_n) and (roi1 >= min_roi) and (roi2 >= min_roi))
+
+    out["検証_train件数"] = train_n
+    out["検証_trainROI"] = train_roi
+    out["検証_test件数"] = test_n
+    out["検証_testROI"] = test_roi
+    out["期間分割OK"] = ok
+    return out
+
+
+# =========================================================
 # 分析表示（回収率/的中率）
 # =========================================================
 def calc_roi_table(src: pd.DataFrame, group_col: str) -> pd.DataFrame:

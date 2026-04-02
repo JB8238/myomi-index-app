@@ -6,11 +6,11 @@ from datetime import datetime
 import re
 
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions, race_badge_from_horses
-from core.history import find_prev_total
+from core.features import add_component_pass_count, add_race_cv_local, add_race_deviation_scores, add_deviation_component_pass
+from core.history import find_prev_total, build_prof_history
 
 
 DATA_DIR = Path("prof_result")
-KAKO_DIR = Path("kako_data")
 PREP_DIR = Path("data")
 BUY_WIN_FULL_PATH = Path("./data/buy_conditions_full_win.csv")
 BUY_PLC_FULL_PATH = Path("./data/buy_conditions_full_place.csv")
@@ -95,87 +95,6 @@ def load_race_level_map(prep_root: Path, target_date: str | None) -> dict:
     
     return level_map
 
-@st.cache_data(show_spinner=False)
-def build_prof_history(data_dir: str) -> pd.DataFrame:
-    rows = []
-    for p in sorted(data_dir.rglob("*.csv")):
-        d = extract_yyyymmdd_from_name(p.name)
-        if d is None:
-            continue
-        mtime = p.stat().st_mtime    # 「日時」に近い情報として更新時刻を併用
-        try:
-            df0 = pd.read_csv(p, encoding="cp932")
-        except Exception:
-            # 文字コード差分がある場合に備えて最低限
-            df0 = pd.read_csv(p, encoding="cp932", errors="ignore")
-        
-        if not {"馬名", "総合利益度"}.issubset(df0.columns):
-            continue
-
-        # 必要最低限の列に絞る（無い列は落ちないように）
-        keep = [c for c in ["場所", "R", "馬番", "馬名", "総合利益度"] if c in df0.columns]
-        df1 = df0[keep].copy()
-        df1["__date"] = int(d)
-        df1["__mtime"] = float(mtime)
-        df1["__file"] = p.name
-        df1["総合利益度"] = pd.to_numeric(df1["総合利益度"], errors="coerce")
-        df1["馬名"] = df1["馬名"].astype(str)
-        rows.append(df1)
-    
-    if not rows:
-        return pd.DataFrame(columns=["馬名", "総合利益度", "__date", "__mtime", "__file"])
-    
-    hist = pd.concat(rows, ignore_index=True)
-    return hist
-
-# def find_prev_total(history: pd.DataFrame, horse_name: str, cur_date: int, cur_mtime: float, cur_file: str):
-#     h = history[
-#         (history["馬名"] == horse_name) &
-#         (history["__file"] != cur_file)
-#     ]
-#     if h.empty:
-#         return np.nan
-#     h = h[
-#         (h["__date"] < cur_date) |
-#         ((h["__date"] == cur_date) & (h["__mtime"] < cur_mtime))
-#     ]
-#     if h.empty:
-#         return np.nan
-#     h = h.sort_values(["__date", "__mtime"])
-#     return h.iloc[-1]["総合利益度"]
-
-def add_component_pass_count_local(d: pd.DataFrame) -> pd.DataFrame:
-    """騎手/調教師/種牡馬の利益度が>=0のカテゴリ数(0-3)を付与"""
-    x = d.copy()
-    def _ok(v): return pd.notna(v) and v >= 0
-    cnt = 0
-    for col in ["騎手利益度", "調教師利益度", "種牡馬利益度"]:
-        if col in x.columns:
-            x[col] = pd.to_numeric(x[col], errors="coerce")
-            cnt += x[col].apply(_ok).astype(int)
-    x["コンポーネント合格数"] = cnt
-    x["合格数区分"] = x["コンポーネント合格数"].map({
-        0: "0/3（全弱）",
-        1: "1/3（片輪）",
-        2: "2/3（概ね良）",
-        3: "3/3（万全）",
-    })
-    return x
-
-def add_race_cv_local(d: pd.DataFrame) -> pd.DataFrame:
-    """単一レース（この画面）用：総合利益度からcv(std/mean)を計算して全行に付与"""
-    x = d.copy()
-    if "総合利益度" not in x.columns:
-        x["cv"] = np.nan
-        return x
-    vals = pd.to_numeric(x["総合利益度"], errors="coerce").dropna().to_numpy()
-    if len(vals) == 0:
-        x["cv"] = np.nan
-        return x
-    mean = float(np.mean(vals))
-    std = float(np.std(vals, ddof=0)) if len(vals) >= 2 else 0.0
-    x["cv"] = float(std / mean) if mean != 0 else np.nan
-    return x
 
 # -----------------------------------
 # データ読み込み
@@ -264,6 +183,10 @@ if {"人気", "総合利益度順位"}.issubset(df.columns):
 else:
     df["人気乖離"] = np.nan
 
+# 偏差値情報の付与
+df = add_race_deviation_scores(df)
+df = add_deviation_component_pass(df, threshold=60)
+
 # レースレベル（preprocessed_data 由来）
 level_map = load_race_level_map(PREP_DIR, kaisai_date)
 race_has_condition = {}
@@ -282,7 +205,7 @@ for (place, r), g in df.groupby(["場所", "R"]):
         g_base = g_base[g_base["総合利益度"].notna() & (g_base["総合利益度"] >= 0)]
 
     # 前提条件 (cv & 合格数) のための列を付与
-    g_base = add_component_pass_count_local(g_base)
+    g_base = add_component_pass_count(g_base)
     g_base = add_race_cv_local(g_base)
     g2 = apply_buy_conditions(g_base, lv, cond_win, cond_plc)
     badge = race_badge_from_horses(g2)
