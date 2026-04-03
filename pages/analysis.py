@@ -16,6 +16,7 @@ from core.aggregations import (
     extract_buy_conditions_win,
     extract_buy_conditions_place,
     add_stability_flags,
+    calc_roi_pivot_2d,
 )
 
 # =========================================================
@@ -287,6 +288,7 @@ with st.sidebar:
     st.subheader("戦略前提フィルタ（④×⑤）")
     # 3/3固定（チェックでON/OFFにすると運用が楽）
     use_comp33 = st.checkbox("合格数区分を 3/3（万全）に固定", value=True)
+    use_deviation_23plus = st.checkbox("偏差値合格数2/3+のみ表示", value=False)
     # 混戦度上位率（デフォルト50%）
     top_rate = st.slider("混戦度（cv）上位率", min_value=0.1, max_value=0.9, value=0.5, step=0.05)
 
@@ -410,6 +412,8 @@ else:
 
 if use_comp33 and "合格数区分" in df_hm.columns:
     df_hm = df_hm[df_hm["合格数区分"] == "3/3（万全）"]
+if use_deviation_23plus and "偏差値合格数区分" in df_hm.columns:
+    df_hm = df_hm[df_hm["偏差値合格数区分"] == "2/3+"]
 
 # cv上位率（レース単位で閾値を出して固定）
 cv_threshold = None
@@ -573,7 +577,58 @@ elif tab == "複勝ROI":
 else:
     st.dataframe(pivot_n_ns.style.format("{:.0f}"), use_container_width=True)
 
-st.header("⑥ ヒートマップ：Lv × 上昇値区分 × 人気乖離区分")
+
+st.header("⑥-1 偏差値合格数 × 混戦度（cv）")
+
+need_cols = ["偏差値合格数区分", "混戦度区分"]
+if any(c not in df_hm.columns for c in need_cols):
+    st.info("偏差値合格数区分 または 混戦度区分 が存在しないため、⑥-1 を表示できません。")
+else:
+    piv = calc_roi_pivot_2d(df_hm, row_col="偏差値合格数区分", col_col="混戦度区分")
+
+    if not piv:
+        st.info("⑥-1 の集計に必要なデータが不足しています（欠損など）。")
+    else:
+        tabA = st.radio(
+            "表示指標（⑥-1）",
+            ["頭数", "単勝的中率", "複勝的中率", "単勝回収率", "複勝回収率"],
+            horizontal=True,
+            key="tab_stepA"
+        )
+        fmt = "{:.0f}" if tabA == "頭数" else "{:.1f}%"
+        st.dataframe(
+            piv[tabA].style.format(fmt),
+            use_container_width=True
+        )
+        st.caption("※ 行=偏差値合格数区分、列=cvの混戦度区分（qcut）、はずれは0円で回収率を算出")
+
+
+st.header("⑥-2 偏差値合格数 × 利益度上昇値")
+
+need_cols = ["偏差値合格数区分", "上昇値区分"]
+if any(c not in df_hm.columns for c in need_cols):
+    st.info("偏差値合格数区分 または 上昇値区分 が存在しないため、⑥-2 を表示できません。")
+else:
+    piv = calc_roi_pivot_2d(df_hm, row_col="偏差値合格数区分", col_col="上昇値区分")
+
+    if not piv:
+        st.info("⑥-2 の集計に必要なデータが不足しています（欠損など）。")
+    else:
+        tabB = st.radio(
+            "表示指標（⑥-2）",
+            ["頭数", "単勝的中率", "複勝的中率", "単勝回収率", "複勝回収率"],
+            horizontal=True,
+            key="tab_stepB"
+        )
+        fmt = "{:.0f}" if tabB == "頭数" else "{:.1f}%"
+        st.dataframe(
+            piv[tabB].style.format(fmt),
+            use_container_width=True
+        )
+        st.caption("※ 行=偏差値合格数区分、列=利益度上昇値区分")
+        
+
+st.header("⑦ ヒートマップ：Lv × 上昇値区分 × 人気乖離区分")
 
 # 表示する指標を選択（ROI / 的中率 / 件数）
 metric = st.radio(

@@ -127,6 +127,70 @@ def calc_roi_table(src: pd.DataFrame, group_col: str) -> pd.DataFrame:
     return out
 
 # =========================================================
+# 偏差値合格数 × 混戦度区分（二軸）集計
+# =========================================================
+def calc_roi_pivot_2d(
+    src: pd.DataFrame,
+    row_col: str,
+    col_col: str,
+) -> dict[str, pd.DataFrame]:
+    """
+    row_col × col_col の2軸で、以下をpivotで返す
+        - 頭数
+        - 単勝的中率(%)
+        - 複勝的中率(%)
+        - 単勝回収率(%)
+        - 複勝回収率(%)
+    戻り値: {"頭数": df, "単勝的中率": df, ...}
+    """
+    if src is None or src.empty:
+        return {}
+    if row_col not in src.columns or col_col not in src.columns:
+        return {}
+
+    d = src.copy()
+    # ROI計算用（はずれ=0）
+    d["単勝_回収"] = pd.to_numeric(d.get("単勝"), errors="coerce").fillna(0)
+    d["複勝_回収"] = pd.to_numeric(d.get("複勝"), errors="coerce").fillna(0)
+
+    # 的中フラグが無い場合は補完（analysisのdfには基本入っているが安全策）
+    if "単勝的中" not in d.columns:
+        d["単勝的中"] = pd.to_numeric(d.get("単勝"), errors="coerce").fillna(0) > 0
+    if "複勝的中" not in d.columns:
+        d["複勝的中"] = pd.to_numeric(d.get("複勝"), errors="coerce").fillna(0) > 0
+
+    # dropna（row/colが欠損だとpivotが崩れるため）
+    d = d.dropna(subset=[row_col, col_col])
+    if d.empty:
+        return {}
+
+    # 集計（2軸groupby）
+    g = (
+        d.groupby([row_col, col_col], observed=True)
+        .agg(
+            n=("馬名", "count") if "馬名" in d.columns else ("馬番", "count"),
+            win_hit=("単勝的中", "mean"),
+            plc_hit=("複勝的中", "mean"),
+            win_roi=("単勝_回収", "mean"),
+            plc_roi=("複勝_回収", "mean"),
+        )
+        .reset_index()
+    )
+    g["win_hit"] = g["win_hit"] * 100
+    g["plc_hit"] = g["plc_hit"] * 100
+
+    # pivot化
+    out = {
+        "頭数": g.pivot_table(index=row_col, columns=col_col, values="n", aggfunc="first", observed=True),
+        "単勝的中率": g.pivot_table(index=row_col, columns=col_col, values="win_hit", aggfunc="first", observed=True),
+        "複勝的中率": g.pivot_table(index=row_col, columns=col_col, values="plc_hit", aggfunc="first", observed=True),
+        "単勝回収率": g.pivot_table(index=row_col, columns=col_col, values="win_roi", aggfunc="first", observed=True),
+        "複勝回収率": g.pivot_table(index=row_col, columns=col_col, values="plc_roi", aggfunc="first", observed=True),
+    }
+
+    return out
+
+# =========================================================
 # ヒートマップによる集計
 # =========================================================
 def make_heatmap_table(d: pd.DataFrame, value_col: str) -> pd.DataFrame:

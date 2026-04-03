@@ -75,17 +75,18 @@ def add_race_deviation_scores(df: pd.DataFrame) -> pd.DataFrame:
     }
 
     for src, dst in targets.items():
-        d[src] = pd.to_numeric(d.get(src), errors="coerce")
+        x = pd.to_numeric(d.get(src), errors="coerce")
 
-        def _dev(g):
-            x = g[src]
-            mu = x.mean()
-            sd = x.std(ddof=0)
-            if pd.isna(sd) or sd == 0:
-                return pd.Series(50.0, index=g.index)
-            return 50 + 10 * (x - mu) / sd
+        mean = d.groupby(key, observed=True)[src].transform("mean")
+        std = d.groupby(key, observed=True)[src].transform(
+            lambda s: s.std(ddof=0)
+        )
 
-        d[dst] = d.groupby(key, observed=True).apply(_dev).reset_index(level=key, drop=True)
+        d[dst] = np.where(
+            (std.isna()) | (std == 0),
+            50.0,
+            50 + 10 * (x - mean) / std
+        )
 
     return d
 
@@ -102,7 +103,7 @@ def add_deviation_component_pass(df: pd.DataFrame, threshold: float = 60.0) -> p
     d["偏差値合格数区分"] = d["偏差値合格数"].map({
         0: "0/3",
         1: "1/3",
-        2: "2/3",
-        3: "3/3",
+        2: "2/3+",
+        3: "2/3+",
     })
     return d
