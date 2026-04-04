@@ -313,8 +313,17 @@ if df_return is not None:
     
     df["的中種別"] = df.apply(_hit_label, axis=1)
 
+
+# return_data merge の後、偏差値計算の前
+if race_date is not None:
+    df["開催日"] = int(race_date)
+
+
 # 偏差値情報の付与
-df = add_race_deviation_scores(df)
+df_all = add_race_deviation_scores(df)
+df = df_all[df_all["場所"] == place]
+df = df[df["R"] == race_no]
+
 df = add_deviation_component_pass(df, threshold=60)
 
 # --- Home上部：クイック操作 ---

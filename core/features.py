@@ -75,18 +75,24 @@ def add_race_deviation_scores(df: pd.DataFrame) -> pd.DataFrame:
     }
 
     for src, dst in targets.items():
-        x = pd.to_numeric(d.get(src), errors="coerce")
+        if src not in d.columns:
+            d[dst] = np.nan
+            continue
+
+        x = pd.to_numeric(d[src], errors="coerce")
 
         mean = d.groupby(key, observed=True)[src].transform("mean")
-        std = d.groupby(key, observed=True)[src].transform(
+        std  = d.groupby(key, observed=True)[src].transform(
             lambda s: s.std(ddof=0)
         )
 
-        d[dst] = np.where(
-            (std.isna()) | (std == 0),
-            50.0,
-            50 + 10 * (x - mean) / std
-        )
+        # 偏差値計算（まず通常式）
+        z = 50 + 10 * (x - mean) / std
+
+        # std が NaN or 0 の場合は 50 に置換
+        z = z.where((std.notna()) & (std != 0), 50.0)
+
+        d[dst] = z
 
     return d
 
