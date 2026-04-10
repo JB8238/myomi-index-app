@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from buy_condition_logic import load_buy_conditions, apply_buy_conditions
+from buy_condition_logic import load_buy_conditions, apply_buy_conditions, race_badge_from_horses
 from core.features import add_component_pass_count, add_race_cv_local, add_race_deviation_scores, add_deviation_component_pass
 from core.history import build_prof_history
 from core.loaders import load_preprocessed_for_race, load_csv, normalize_df
@@ -179,6 +179,14 @@ st.set_page_config(
 st.title("🏇 競馬 指数ビューア")
 st.caption("prof_result/フォルダ内のCSVを自動読み込み（ファイル名YYYYMMDD最大を最新として選択）")
 
+win_path = BUY_WIN_FULL_PATH
+win_mtime = win_path.stat().st_mtime if win_path.exists() else 0.0
+cond_win = load_buy_conditions(str(win_path), win_mtime)
+
+plc_path = BUY_PLC_FULL_PATH
+plc_mtime = plc_path.stat().st_mtime if plc_path.exists() else 0.0
+cond_plc = load_buy_conditions(str(plc_path), plc_mtime)
+
 
 # --- サイドバー：データソース ---
 st.sidebar.header("データ設定")
@@ -235,6 +243,9 @@ if st.sidebar.button("🔄 再読み込み（キャッシュクリア）"):
 # --- 読み込み ---
 df_raw = load_csv(str(selected_file))
 df = normalize_df(df_raw)
+df_all = df.copy()
+
+
 
 # --- レース日（prof_result側のファイル名日付）を取得し、kako_dataもそれに合わせる ---
 race_date = extract_yyyymmdd_from_name(Path(selected_file).name)
@@ -318,7 +329,6 @@ if df_return is not None:
 if race_date is not None:
     df["開催日"] = int(race_date)
 
-
 # 偏差値情報の付与
 df_all = add_race_deviation_scores(df)
 df = df_all[df_all["場所"] == place]
@@ -326,9 +336,28 @@ df = df[df["R"] == race_no]
 
 df = add_deviation_component_pass(df, threshold=60)
 
+if race_date is not None:
+    df_prep = load_preprocessed_for_race(PREP_DIR, race_date)
+    if df_prep is not None and not df_prep.empty and {"場所", "R", "レースレベル"}.issubset(df_prep.columns):
+        df_prep["R"] = pd.to_numeric(df_prep["R"], errors="coerce")
+        df_race = df_prep[(df_prep["場所"] == place) & (df_prep["R"] == int(race_no))]
+        if not df_race.empty:
+            rl = df_race["レースレベル"].dropna().astype(str).mode().iloc[0]
+        
+        df_all = df_all.merge(
+            df_prep[["場所", "R", "レースレベル"]].drop_duplicates(),
+            on=["場所", "R"],
+            how="left",
+        )
+
+df_all = add_component_pass_count(df_all)
+df_all = add_race_cv_local(df_all)
+df_all = apply_buy_conditions(df_all, rl, cond_win, cond_plc)
+
 # --- Home上部：クイック操作 ---
 places = sorted(df["場所"].dropna().unique().tolist()) if "場所" in df.columns else []
 races = sorted(df["R"].dropna().unique().astype(int).tolist()) if "R" in df.columns else []
+
 
 with st.sidebar:
     st.header("条件選択")
@@ -371,22 +400,41 @@ history = build_prof_history(str(DATA_DIR))
 current_date = extract_yyyymmdd_from_name(Path(selected_file).name)
 current_mtime = Path(selected_file).stat().st_mtime
 
-def find_prev_total_for_horse(horse_name: str) -> float:
-    # 同一ファイル（現在の selected_file）由来は除外
-    h = history[(history["馬名"] == horse_name) & (history["__file"] != Path(selected_file).name)]
-    if h.empty or current_date is None:
-        return np.nan
-    # 「開催日に一番近い日時」= (date, mtime) が現在より前で最大のもの
+# def find_prev_total_for_horse(horse_name: str) -> float:
+#     # 同一ファイル（現在の selected_file）由来は除外
+#     h = history[(history["馬名"] == horse_name) & (history["__file"] != Path(selected_file).name)]
+#     if h.empty or current_date is None:
+#         return np.nan
+#     # 「開催日に一番近い日時」= (date, mtime) が現在より前で最大のもの
+#     h = h[(h["__date"] < current_date) | ((h["__date"] == current_date) & (h["__mtime"] < current_mtime))]
+#     if h.empty:
+#         return np.nan
+#     h = h.sort_values(["__date", "__mtime"])
+#     v = h.iloc[-1]["総合利益度"]
+#     return float(v) if pd.notna(v) else np.nan
+
+# if "馬名" in filtered.columns:
+#     filtered = filtered.copy()
+#     filtered["前走総合利益度"] = filtered["馬名"].astype(str).apply(find_prev_total_for_horse)
+
+_prev_total_map: dict[str, float] = {}
+if not history.empty and current_date is not None:
+    h = history[history["__file"] != Path(selected_file).name].copy()
     h = h[(h["__date"] < current_date) | ((h["__date"] == current_date) & (h["__mtime"] < current_mtime))]
-    if h.empty:
-        return np.nan
-    h = h.sort_values(["__date", "__mtime"])
-    v = h.iloc[-1]["総合利益度"]
-    return float(v) if pd.notna(v) else np.nan
+    if not h.empty:
+        h = h.sort_values(["__date", "__mtime"])
+        # 各馬の最新行（last）だけ残す
+        latest = h.groupby("馬名", sort=False).tail(1)
+        _prev_total_map = (
+            latest.set_index("馬名")["総合利益度"]
+            .dropna()
+            .astype(float)
+            .to_dict()
+        )
 
 if "馬名" in filtered.columns:
     filtered = filtered.copy()
-    filtered["前走総合利益度"] = filtered["馬名"].astype(str).apply(find_prev_total_for_horse)
+    filtered["前走総合利益度"] = filtered["馬名"].astype(str).map(_prev_total_map)
 
 
 # =========================================
@@ -427,13 +475,7 @@ st.metric("レースレベル", race_level if race_level else "—")
 st.write(f"**選択中：** 場所={place if place else '-'} / R={race_no if race_no is not None else '-'} / 合格のみ={'ON' if pass_only else 'OFF'}")
 st.caption("※ この画面の判定は、上記「合格のみ」フィルタ適用後の馬に対して行われます。")
 
-win_path = BUY_WIN_FULL_PATH
-win_mtime = win_path.stat().st_mtime if win_path.exists() else 0.0
-cond_win = load_buy_conditions(str(win_path), win_mtime)
 
-plc_path = BUY_PLC_FULL_PATH
-plc_mtime = plc_path.stat().st_mtime if plc_path.exists() else 0.0
-cond_plc = load_buy_conditions(str(plc_path), plc_mtime)
 
 # ======================================
 # 条件CSVの母集団（analysis側設定）を表示
@@ -469,6 +511,147 @@ if race_level:
         st.warning("△ 複勝条件：上昇値は合致（人気乖離が条件なら買い）")
 else:
     st.caption("※ レースレベルが取得できないため、買い条件判定を行いません。")
+
+def _norm_place(x):
+    return str(x).replace("\u3000", " ").strip() if pd.notna(x) else x
+
+# ---- level_map を堅牢に作る ----
+level_map = {}
+if df_prep is not None and not df_prep.empty:
+    tmp = df_prep.copy()
+    tmp["場所"] = tmp["場所"].apply(_norm_place)
+    tmp["R"] = pd.to_numeric(tmp["R"], errors="coerce")
+    tmp["レースレベル"] = tmp["レースレベル"].astype(str).str.strip()
+    tmp = tmp.dropna(subset=["場所", "R", "レースレベル"])
+    for _, row in tmp.iterrows():
+        level_map[(row["場所"], int(row["R"]))] = row["レースレベル"]
+
+race_summary = {}
+
+# df_all 側も place/R を統一
+df_all2 = df_all.copy()
+
+# --- ★追加：全レース分の利益度上昇値・人気乖離を計算 ---
+if "馬名" in df_all2.columns and "前走総合利益度" not in df_all2.columns:
+    df_all2["前走総合利益度"] = df_all2["馬名"].astype(str).map(_prev_total_map)
+
+if "総合利益度" in df_all2.columns and "利益度上昇値" not in df_all2.columns:
+    _cur = pd.to_numeric(df_all2["総合利益度"], errors="coerce")
+    _prev = pd.to_numeric(df_all2["前走総合利益度"], errors="coerce")
+    df_all2["利益度上昇値"] = _cur - _prev
+
+if "人気" in df_all2.columns and "総合利益度順位" in df_all2.columns and "人気乖離" not in df_all2.columns:
+    df_all2["人気乖離"] = pd.to_numeric(df_all2["人気"], errors="coerce") - pd.to_numeric(df_all2["総合利益度順位"], errors="coerce")
+
+
+if "場所" in df_all2.columns:
+    df_all2["場所"] = df_all2["場所"].apply(_norm_place)
+if "R" in df_all2.columns:
+    df_all2["R"] = pd.to_numeric(df_all2["R"], errors="coerce")
+
+for (p, r), g in df_all2.dropna(subset=["場所", "R"]).groupby(["場所", "R"]):
+    r = int(r)
+
+    # ---- 強調（⭐🔥） ----
+    prefix = ""
+    lv = level_map.get((p, r))
+    if lv in ("Lv4", "Lv5"):
+        prefix = "🔥"
+    elif lv == "Lv3":
+        if "総合利益度" in g.columns:
+            if (pd.to_numeric(g["総合利益度"], errors="coerce") >= 17).any():
+                prefix = "⭐"
+
+    # ---- バッジ（✅🅰️🅱️☑️） ----
+    badge = ""
+    g2 = g.copy()
+
+    # 合格馬のみ
+    if "総合利益度" in g2.columns:
+        g2["総合利益度"] = pd.to_numeric(g2["総合利益度"], errors="coerce")
+        g2 = g2[g2["総合利益度"].notna() & (g2["総合利益度"] >= 0)]
+
+    if lv is not None and not g2.empty:
+        # 前提列
+        g2 = add_component_pass_count(g2)
+        g2 = add_race_cv_local(g2)
+
+        # apply_buy_conditions は「戻り値型」でも「破壊的型」でも両対応
+        tmp_out = apply_buy_conditions(g2, lv, cond_win, cond_plc)
+        if tmp_out is not None:
+            g2 = tmp_out
+
+        # ここで列が無いなら、条件付与に失敗している
+        if ("単勝_条件" in g2.columns) and ("複勝_条件" in g2.columns):
+            badge = race_badge_from_horses(g2)
+        else:
+            badge = ""
+
+    race_summary[(p, r)] = {"prefix": prefix, "badge": badge}
+
+# st.write("DEBUG race_summary sample:", list(race_summary.items())[5:10])
+
+# ---------------------------
+# 折り畳み式 レース選択UI（場所 × R）
+# ---------------------------
+if race_date is not None and "場所" in df_all.columns and "R" in df_all.columns:
+    df_nav = df_all[df_all["開催日"] == race_date].copy()
+
+    if not df_nav.empty:
+        places_today = sorted(df_nav["場所"].dropna().unique().tolist())
+        races_today = sorted(df_nav["R"].dropna().astype(int).unique().tolist())
+
+        # ---- 現在選択中のレース表示（常時1行） ----
+        st.markdown(
+            f"### 📅 {race_date}　📍 {place}　🏁 {race_no}R"
+        )
+
+        # ---- 折りたたみ ----
+        with st.expander("🔽 レースを変更", expanded=False):
+            # ヘッダ（場所）
+            header_cols = st.columns(len(places_today))
+            for i, p in enumerate(places_today):
+                header_cols[i].markdown(f"**{p}**")
+
+            # 各R行（R表記はボタン内だけ）
+            for r in races_today:
+                row_cols = st.columns(len(places_today))
+
+                for i, p in enumerate(places_today):
+                    exists = (
+                        (df_nav["場所"] == p) &
+                        (df_nav["R"] == r)
+                    ).any()
+    
+                    is_current = (p == place) and (r == race_no)
+
+                    info = race_summary.get((p, int(r)), {})
+
+                    label = f"{info.get('prefix', '')}{r}R"
+                    if info.get("badge", ""):
+                        label = f"{label} {info['badge']}"
+                        
+                    if is_current:
+                        row_cols[i].button(
+                            label,
+                            disabled=True,
+                            use_container_width=True,
+                            key=f"cur_{p}_{r}",
+                        )
+                    else:
+                        if row_cols[i].button(
+                            label,
+                            use_container_width=True,
+                            key=f"btn_{p}_{r}",
+                        ):
+                            st.query_params.update({
+                                "date": race_date,
+                                "place": p,
+                                "race": r,
+                            })
+                            st.rerun()
+        st.divider()
+
 
 # --- サマリー（任意） ---
 st.subheader("サマリー")

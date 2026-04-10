@@ -130,26 +130,44 @@ def calc_race_competitiveness(df_in: pd.DataFrame) -> pd.DataFrame:
     x["総合利益度"] = pd.to_numeric(x["総合利益度"], errors="coerce")
     x = x.dropna(subset=["総合利益度"])
 
-    def _agg(g: pd.DataFrame) -> pd.Series:
-        vals = g["総合利益度"].sort_values(ascending=False).to_numpy()
-        n = len(vals)
-        top1 = float(vals[0]) if n >= 1 else np.nan
-        top2 = float(vals[1]) if n >= 2 else np.nan
-        gap12 = (top1 - top2) if pd.notna(top1) and pd.notna(top2) else np.nan
-        mean = float(np.nanmean(vals)) if n else np.nan
-        std = float(np.nanstd(vals, ddof=0)) if n >= 2 else 0.0
-        cv = float(std / mean) if pd.notna(mean) and mean != 0 else np.nan
-        return pd.Series({
-            "n": n,
-            "mean": mean,
-            "std": std,
-            "cv": cv,
-            "top1": top1,
-            "top2": top2,
-            "gap12": gap12,
-        })
+    # def _agg(g: pd.DataFrame) -> pd.Series:
+    #     vals = g["総合利益度"].sort_values(ascending=False).to_numpy()
+    #     n = len(vals)
+    #     top1 = float(vals[0]) if n >= 1 else np.nan
+    #     top2 = float(vals[1]) if n >= 2 else np.nan
+    #     gap12 = (top1 - top2) if pd.notna(top1) and pd.notna(top2) else np.nan
+    #     mean = float(np.nanmean(vals)) if n else np.nan
+    #     std = float(np.nanstd(vals, ddof=0)) if n >= 2 else 0.0
+    #     cv = float(std / mean) if pd.notna(mean) and mean != 0 else np.nan
+    #     return pd.Series({
+    #         "n": n,
+    #         "mean": mean,
+    #         "std": std,
+    #         "cv": cv,
+    #         "top1": top1,
+    #         "top2": top2,
+    #         "gap12": gap12,
+    #     })
 
-    out = x.groupby(key, observed=True).apply(_agg).reset_index()
+    # out = x.groupby(key, observed=True).apply(_agg).reset_index()
+
+    grp = x.groupby(key, observed=True)["総合利益度"]
+
+    out = grp.agg(n="count", mean="mean", std="std").reset_index()
+    # stdはddof=1なのでddof=0に補正
+    out["std"] = out["std"] * np.sqrt((out["n"] - 1) / out["n"])
+    out.loc[out["n"] < 2, "std"] = 0.0
+    out["cv"] = out["std"] / out["mean"].replace(0, np.nan)
+
+    # top1, top2 は nlargest で一括取得
+    top2 = grp.nlargest(2).droplevel(-1).groupby(level=[0, 1, 2])
+    top1 = top2.nth(0).rename("top1")
+    top2_val = top2.nth(1).rename("top2")
+
+    out = out.merge(top1.reset_index(), on=key, how="left")
+    out = out.merge(top2_val.reset_index(), on=key, how="left")
+    out["gap12"] = out["top1"] - out["top2"]
+    
     return out
 
 
@@ -208,6 +226,11 @@ with st.sidebar:
 frames = []
 df_ret = load_return(MERGED_RETURN_PATH) if MERGED_RETURN_PATH.exists() else None
 
+ret_by_date = {}
+if df_ret is not None:
+    for d_key, grp in df_ret.groupby("開催日"):
+        ret_by_date[d_key] = grp
+
 for d, p in dated:
     if d not in target_dates:
         continue
@@ -215,9 +238,9 @@ for d, p in dated:
     dfp = load_prof(p)
     dfp["開催日"] = d
 
-    if df_ret is not None:
+    if d in ret_by_date:
         dfp = dfp.merge(
-            df_ret[df_ret["開催日"] == d],
+            ret_by_date[d],
             on=["開催日", "場所", "R", "馬番"],
             how="left",
         )
@@ -685,11 +708,19 @@ else:
 
     # Stylerに件数も渡してセルごとに色付け
     def apply_styles(data):
-        styles = pd.DataFrame("", index=data.index, columns=data.columns)
-        for r in data.index:
-            for c in data.columns:
-                styles.loc[r, c] = colorize(data.loc[r, c], hm_n.loc[r, c] if (r in hm_n.index and c in hm_n.columns) else 0)
-        return styles
+        # hm_n を data と同じ shape にそろえる
+        n_aligned = hm_n.reindex_like(data).fillna(0)
+
+        # numpy で一括判定
+        vals = data.values.astype(float)
+        ns = n_aligned.values.astype(float)
+        styles_arr = np.empty(vals.shape, dtype=object)
+
+        for i in range(vals.shape[0]):
+            for j in range(vals.shape[1]):
+                styles_arr[i, j] = colorize(vals[i, j], ns[i, j])
+
+        return pd.DataFrame(styles_arr, index=data.index, columns=data.columns)
 
     if metric == "件数":
         sty = hm.style.apply(apply_styles, axis=None).format("{:.0f}")

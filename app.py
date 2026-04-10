@@ -4,6 +4,7 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 import re
+import hmac
 
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions, race_badge_from_horses
 from core.features import add_component_pass_count, add_race_cv_local, add_race_deviation_scores, add_deviation_component_pass
@@ -15,6 +16,29 @@ PREP_DIR = Path("data")
 BUY_WIN_FULL_PATH = Path("./data/buy_conditions_full_win.csv")
 BUY_PLC_FULL_PATH = Path("./data/buy_conditions_full_place.csv")
 MERGED_RETURN_PATH = Path("./data/return_data_merged.csv")
+
+# パスワード認証
+def check_password():
+    def password_entered():
+        if hmac.compare_digest(
+            st.session_state["password"], st.secrets["password"]
+        ):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
+        else:
+            st.session_state["password_correct"] = False
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    st.text_input("パスワード", type="password", key="password", on_change=password_entered)
+    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+        st.error("パスワードが正しくありません")
+    return False
+
+if not check_password():
+    st.stop()
+
 
 st.set_page_config(
     page_title="開催レース一覧",
