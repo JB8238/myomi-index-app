@@ -400,23 +400,6 @@ history = build_prof_history(str(DATA_DIR))
 current_date = extract_yyyymmdd_from_name(Path(selected_file).name)
 current_mtime = Path(selected_file).stat().st_mtime
 
-# def find_prev_total_for_horse(horse_name: str) -> float:
-#     # 同一ファイル（現在の selected_file）由来は除外
-#     h = history[(history["馬名"] == horse_name) & (history["__file"] != Path(selected_file).name)]
-#     if h.empty or current_date is None:
-#         return np.nan
-#     # 「開催日に一番近い日時」= (date, mtime) が現在より前で最大のもの
-#     h = h[(h["__date"] < current_date) | ((h["__date"] == current_date) & (h["__mtime"] < current_mtime))]
-#     if h.empty:
-#         return np.nan
-#     h = h.sort_values(["__date", "__mtime"])
-#     v = h.iloc[-1]["総合利益度"]
-#     return float(v) if pd.notna(v) else np.nan
-
-# if "馬名" in filtered.columns:
-#     filtered = filtered.copy()
-#     filtered["前走総合利益度"] = filtered["馬名"].astype(str).apply(find_prev_total_for_horse)
-
 _prev_total_map: dict[str, float] = {}
 if not history.empty and current_date is not None:
     h = history[history["__file"] != Path(selected_file).name].copy()
@@ -608,48 +591,40 @@ if race_date is not None and "場所" in df_all.columns and "R" in df_all.column
 
         # ---- 折りたたみ ----
         with st.expander("🔽 レースを変更", expanded=False):
-            # ヘッダ（場所）
-            header_cols = st.columns(len(places_today))
-            for i, p in enumerate(places_today):
-                header_cols[i].markdown(f"**{p}**")
+            tabs = st.tabs(places_today)
+            for tab, p in zip(tabs, places_today):
+                with tab:
+                    # この場所のレース番号だけ取得
+                    races_at_place = sorted(
+                        df_nav[df_nav["場所"] == p]["R"].dropna().astype(int).unique().tolist()
+                    )
+                    for r in races_at_place:
+                        is_current = (p == place) and (r == race_no)
+                        info = race_summary.get((p, int(r)), {})
 
-            # 各R行（R表記はボタン内だけ）
-            for r in races_today:
-                row_cols = st.columns(len(places_today))
-
-                for i, p in enumerate(places_today):
-                    exists = (
-                        (df_nav["場所"] == p) &
-                        (df_nav["R"] == r)
-                    ).any()
-    
-                    is_current = (p == place) and (r == race_no)
-
-                    info = race_summary.get((p, int(r)), {})
-
-                    label = f"{info.get('prefix', '')}{r}R"
-                    if info.get("badge", ""):
-                        label = f"{label} {info['badge']}"
+                        label = f"{info.get('plefix', '')}{r}R"
+                        if info.get("badge", ""):
+                            label = f"{label} {info['badge']}"
                         
-                    if is_current:
-                        row_cols[i].button(
-                            label,
-                            disabled=True,
-                            use_container_width=True,
-                            key=f"cur_{p}_{r}",
-                        )
-                    else:
-                        if row_cols[i].button(
-                            label,
-                            use_container_width=True,
-                            key=f"btn_{p}_{r}",
-                        ):
-                            st.query_params.update({
-                                "date": race_date,
-                                "place": p,
-                                "race": r,
-                            })
-                            st.rerun()
+                        if is_current:
+                            st.button(
+                                label,
+                                disabled=True,
+                                use_container_width=True,
+                                key=f"cur_{p}_{r}",
+                            )
+                        else:
+                            if st.button(
+                                label,
+                                use_container_width=True,
+                                key=f"btn_{p}_{r}",
+                            ):
+                                st.query_params.update({
+                                    "date": race_date,
+                                    "place": p,
+                                    "race": r,
+                                })
+                                st.rerun()
         st.divider()
 
 
