@@ -193,15 +193,16 @@ def calc_roi_pivot_2d(
 # =========================================================
 # ヒートマップによる集計
 # =========================================================
-def make_heatmap_table(d: pd.DataFrame, value_col: str) -> pd.DataFrame:
+def make_heatmap_table(d: pd.DataFrame, value_col: str, gap_col: str = "人気乖離区分") -> pd.DataFrame:
     """
     value_col:
         - '単勝ROI' / '複勝ROI' / '単勝的中率' / '複勝的中率' / '件数'
+    gap_col: 列軸に使う乖離区分列名（"人気乖離区分" or "推定人気乖離区分"）
     """
     x = d.copy()
 
     # 区分列が無い時は落ちないように
-    if "上昇値区分" not in x.columns or "人気乖離区分" not in x.columns:
+    if "上昇値区分" not in x.columns or gap_col not in x.columns:
         return pd.DataFrame()
 
     # ROI用に「外れ=0」を作る（NaNの平均を避ける）
@@ -209,28 +210,28 @@ def make_heatmap_table(d: pd.DataFrame, value_col: str) -> pd.DataFrame:
     x["複勝_回収"] = pd.to_numeric(x.get("複勝"), errors="coerce").fillna(0)
 
     pivot_count = x.pivot_table(
-        index="上昇値区分", columns="人気乖離区分",
+        index="上昇値区分", columns=gap_col,
         values="馬番" if "馬番" in x.columns else "馬名",
         aggfunc="count", fill_value=0, observed=True
     )
 
     pivot_win_roi = x.pivot_table(
-        index="上昇値区分", columns="人気乖離区分",
+        index="上昇値区分", columns=gap_col,
         values="単勝_回収", aggfunc="mean", observed=True
     )
 
     pivot_plc_roi = x.pivot_table(
-        index="上昇値区分", columns="人気乖離区分",
+        index="上昇値区分", columns=gap_col,
         values="複勝_回収", aggfunc="mean", observed=True
     )
 
     pivot_win_hit = x.pivot_table(
-        index="上昇値区分", columns="人気乖離区分",
+        index="上昇値区分", columns=gap_col,
         values="単勝的中", aggfunc="mean", observed=True
     ) * 100
 
     pivot_plc_hit = x.pivot_table(
-        index="上昇値区分", columns="人気乖離区分",
+        index="上昇値区分", columns=gap_col,
         values="複勝的中", aggfunc="mean", observed=True
     ) * 100
 
@@ -250,8 +251,15 @@ def make_heatmap_table(d: pd.DataFrame, value_col: str) -> pd.DataFrame:
 # =========================================================
 # 買い条件自動抽出
 # =========================================================
-def build_condition_cells(df_hm: pd.DataFrame) -> pd.DataFrame:
+def build_condition_cells(df_hm: pd.DataFrame, gap_col: str = "人気乖離区分") -> pd.DataFrame:
+    """
+    gap_col: groupby に使う乖離区分列名。出力列は常に "人気乖離区分" に統一する
+    （buy_condition_logic.py / CSV フォーマットとの互換性維持のため）
+    """
     x = df_hm.copy()
+
+    if gap_col not in x.columns:
+        return pd.DataFrame()
 
     # ROI計算用（はずれ=0）
     x["単勝_回収"] = pd.to_numeric(x.get("単勝"), errors="coerce").fillna(0)
@@ -259,7 +267,7 @@ def build_condition_cells(df_hm: pd.DataFrame) -> pd.DataFrame:
 
     agg = (
         x.groupby(
-            ["レースレベル", "上昇値区分", "人気乖離区分"],
+            ["レースレベル", "上昇値区分", gap_col],
             observed=True
         )
         .agg(
@@ -274,6 +282,11 @@ def build_condition_cells(df_hm: pd.DataFrame) -> pd.DataFrame:
 
     agg["単勝的中率"] = agg["単勝的中率"] * 100
     agg["複勝的中率"] = agg["複勝的中率"] * 100
+
+    # 出力列名を常に "人気乖離区分" に統一（CSV フォーマット互換）
+    if gap_col != "人気乖離区分":
+        agg = agg.rename(columns={gap_col: "人気乖離区分"})
+
     return agg
 
 def extract_buy_conditions_win(
@@ -281,6 +294,8 @@ def extract_buy_conditions_win(
     min_roi: float = 110.0,
     min_n: int = 10
 ) -> pd.DataFrame:
+    if cells is None or cells.empty or "単勝ROI" not in cells.columns:
+        return pd.DataFrame()
     out = cells[
         (cells["単勝ROI"] >= min_roi) &
         (cells["件数"] >= min_n)
@@ -299,6 +314,8 @@ def extract_buy_conditions_place(
     min_roi: float = 105.0,
     min_n: int = 10
 ) -> pd.DataFrame:
+    if cells is None or cells.empty or "複勝ROI" not in cells.columns:
+        return pd.DataFrame()
     out = cells[
         (cells["複勝ROI"] >= min_roi) &
         (cells["件数"] >= min_n)

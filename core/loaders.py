@@ -66,6 +66,8 @@ def load_return(path: Path) -> pd.DataFrame:
         "単勝",
         "複勝",
         "馬連配当",
+        "推定人気",
+        "人気ランク",
     ]
 
     keep = [c for c in ["開催日", "場所", "R", "馬番"] + RESULT_COLS if c in df.columns]
@@ -76,7 +78,7 @@ def load_return(path: Path) -> pd.DataFrame:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
     for c in RESULT_COLS:
-        if c in df.columns:
+        if c in df.columns and c != "人気ランク":  # 人気ランクは文字列（A〜E）のため数値化しない
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
     if "場所" in df.columns:

@@ -118,14 +118,30 @@ def judge_row(val_up, val_gap, cond_df_lv: pd.DataFrame):
     return "✅", f"{r0['上昇値区分']} & {r0['人気乖離区分']} (件数={int(r0['件数'])})"
 
 
-def apply_buy_conditions(df: pd.DataFrame, race_level: str, cond_win: pd.DataFrame, cond_plc: pd.DataFrame) -> pd.DataFrame:
-    """df（馬単位）に 単勝/複勝 の条件判定列を付与する（index_view/home共通）"""
+def apply_buy_conditions(
+    df: pd.DataFrame,
+    race_level: str,
+    cond_win: pd.DataFrame,
+    cond_plc: pd.DataFrame,
+    pop_col: str = "人気乖離",
+    suffix: str = "",
+) -> pd.DataFrame:
+    """df（馬単位）に 単勝/複勝 の条件判定列を付与する（index_view/home共通）
+
+    pop_col: 人気乖離として使う列名（"人気乖離" or "推定人気乖離"）
+    suffix:  出力列名のサフィックス（"" → 単勝_条件, "_推定" → 単勝_条件_推定）
+    """
     out = df.copy()
+    win_key = f"単勝_条件{suffix}"
+    win_exp = f"単勝_条件説明{suffix}"
+    plc_key = f"複勝_条件{suffix}"
+    plc_exp = f"複勝_条件説明{suffix}"
+
     if not race_level:
-        out["単勝_条件"] = ""
-        out["単勝_条件説明"] = ""
-        out["複勝_条件"] = ""
-        out["複勝_条件説明"] = ""
+        out[win_key] = ""
+        out[win_exp] = ""
+        out[plc_key] = ""
+        out[plc_exp] = ""
         return out
 
     cw = cond_win[cond_win["レースレベル"] == race_level] if not cond_win.empty else pd.DataFrame()
@@ -133,24 +149,28 @@ def apply_buy_conditions(df: pd.DataFrame, race_level: str, cond_win: pd.DataFra
 
     res_w = out.apply(
         lambda r: ("", check_prereq(r, cw)[1]) if not check_prereq(r, cw)[0]
-        else judge_row(r.get("利益度上昇値"), r.get("人気乖離"), cw),
+        else judge_row(r.get("利益度上昇値"), r.get(pop_col), cw),
         axis=1
     )
-    out["単勝_条件"] = res_w.apply(lambda t: t[0])
-    out["単勝_条件説明"] = res_w.apply(lambda t: t[1])
+    out[win_key] = res_w.apply(lambda t: t[0])
+    out[win_exp] = res_w.apply(lambda t: t[1])
 
     res_p = out.apply(
         lambda r: ("", check_prereq(r, cp)[1]) if not check_prereq(r, cp)[0]
-        else judge_row(r.get("利益度上昇値"), r.get("人気乖離"), cp),
+        else judge_row(r.get("利益度上昇値"), r.get(pop_col), cp),
         axis=1
     )
-    out["複勝_条件"] = res_p.apply(lambda t: t[0])
-    out["複勝_条件説明"] = res_p.apply(lambda t: t[1])
+    out[plc_key] = res_p.apply(lambda t: t[0])
+    out[plc_exp] = res_p.apply(lambda t: t[1])
 
     return out
 
 
-def race_badge_from_horses(df_with_judgement: pd.DataFrame) -> str:
+def race_badge_from_horses(
+    df_with_judgement: pd.DataFrame,
+    win_col: str = "単勝_条件",
+    plc_col: str = "複勝_条件",
+) -> str:
     """
     home用：馬単位判定結果からレースバッジを決める（index_viewと整合）
     ルール：
@@ -162,23 +182,25 @@ def race_badge_from_horses(df_with_judgement: pd.DataFrame) -> str:
     """
     if df_with_judgement is None or df_with_judgement.empty:
         return ""
+    if win_col not in df_with_judgement.columns or plc_col not in df_with_judgement.columns:
+        return ""
 
     both_same = (
-        (df_with_judgement["単勝_条件"] == "✅") &
-        (df_with_judgement["複勝_条件"] == "✅")
+        (df_with_judgement[win_col] == "✅") &
+        (df_with_judgement[plc_col] == "✅")
     ).any()
     if both_same:
         return " ✅"
 
     has_conditional = (
-        (df_with_judgement["単勝_条件"] == "△") |
-        (df_with_judgement["複勝_条件"] == "△")
+        (df_with_judgement[win_col] == "△") |
+        (df_with_judgement[plc_col] == "△")
     ).any()
     if has_conditional:
         return " ☑️"
 
-    has_win = (df_with_judgement["単勝_条件"] == "✅").any()
-    has_plc = (df_with_judgement["複勝_条件"] == "✅").any()
+    has_win = (df_with_judgement[win_col] == "✅").any()
+    has_plc = (df_with_judgement[plc_col] == "✅").any()
 
     if has_win:
         return " 🅰️"

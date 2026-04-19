@@ -15,6 +15,9 @@ PREP_DIR = Path("data")
 MERGED_RETURN_PATH = Path("./data/return_data_merged.csv")
 BUY_WIN_FULL_PATH = Path("./data/buy_conditions_full_win.csv")
 BUY_PLC_FULL_PATH = Path("./data/buy_conditions_full_place.csv")
+BUY_WIN_EST_PATH  = Path("./data/buy_conditions_full_win_推定.csv")
+BUY_PLC_EST_PATH  = Path("./data/buy_conditions_full_place_推定.csv")
+SMARTRC_DIR = Path("./data/smartrc")
 
 RESULT_COLS = [
     "人気",
@@ -187,6 +190,11 @@ plc_path = BUY_PLC_FULL_PATH
 plc_mtime = plc_path.stat().st_mtime if plc_path.exists() else 0.0
 cond_plc = load_buy_conditions(str(plc_path), plc_mtime)
 
+win_est_mtime = BUY_WIN_EST_PATH.stat().st_mtime if BUY_WIN_EST_PATH.exists() else 0.0
+cond_win_est = load_buy_conditions(str(BUY_WIN_EST_PATH), win_est_mtime)
+plc_est_mtime = BUY_PLC_EST_PATH.stat().st_mtime if BUY_PLC_EST_PATH.exists() else 0.0
+cond_plc_est = load_buy_conditions(str(BUY_PLC_EST_PATH), plc_est_mtime)
+
 
 # --- サイドバー：データソース ---
 st.sidebar.header("データ設定")
@@ -293,6 +301,21 @@ if df_return is not None:
             how="left",
             validate="m:1"
         )
+
+    # ---- smartrc 推定人気・人気ランク のマージ ----
+    if race_date is not None:
+        smartrc_path = SMARTRC_DIR / f"smartrc_{race_date}.csv"
+        if smartrc_path.exists():
+            df_smartrc = pd.read_csv(smartrc_path, encoding="utf-8-sig")
+            df_smartrc["場所"] = df_smartrc["場所"].astype(str).str.replace("\u3000", " ").str.strip()
+            df_smartrc["R"] = pd.to_numeric(df_smartrc["R"], errors="coerce")
+            df_smartrc["馬番"] = pd.to_numeric(df_smartrc["馬番"], errors="coerce")
+            df_smartrc["推定人気"] = pd.to_numeric(df_smartrc["推定人気"], errors="coerce")
+            df = df.merge(
+                df_smartrc[["場所", "R", "馬番", "推定人気", "人気ランク"]],
+                on=["場所", "R", "馬番"],
+                how="left",
+            )
 
     # ---- 着順は数値比較するため数値化 ----
     if "着" in df.columns:
@@ -430,12 +453,25 @@ if "総合利益度" in filtered.columns:
     prev = pd.to_numeric(filtered["前走総合利益度"], errors="coerce")
     filtered["利益度上昇値"] = cur - prev
 
-if "人気" in filtered.columns and "総合利益度順位" in filtered.columns:
-    filtered["人気"] = pd.to_numeric(filtered["人気"], errors="coerce")
+if "総合利益度順位" in filtered.columns:
     filtered["総合利益度順位"] = pd.to_numeric(filtered["総合利益度順位"], errors="coerce")
-    filtered["人気乖離"] = filtered["人気"] - filtered["総合利益度順位"]
+    if "人気" in filtered.columns:
+        filtered["人気"] = pd.to_numeric(filtered["人気"], errors="coerce")
+    if "推定人気" in filtered.columns:
+        filtered["推定人気"] = pd.to_numeric(filtered["推定人気"], errors="coerce")
+    filtered["人気乖離"] = (
+        filtered["人気"] - filtered["総合利益度順位"]
+        if "人気" in filtered.columns
+        else pd.Series(np.nan, index=filtered.index)
+    )
+    filtered["推定人気乖離"] = (
+        filtered["推定人気"] - filtered["総合利益度順位"]
+        if "推定人気" in filtered.columns
+        else pd.Series(np.nan, index=filtered.index)
+    )
 else:
     filtered["人気乖離"] = np.nan
+    filtered["推定人気乖離"] = np.nan
 
 # =========================================
 # レースレベル（preprocessed_data から取得）
@@ -480,18 +516,32 @@ if race_level:
     # 前提条件 (cv & 合格数) のための列を付与
     filtered = add_component_pass_count(filtered)
     filtered = add_race_cv_local(filtered)
+    # 確定人気ベースの判定
     filtered = apply_buy_conditions(filtered, race_level, cond_win, cond_plc)
+    # 推定人気ベースの判定
+    filtered = apply_buy_conditions(filtered, race_level, cond_win_est, cond_plc_est, pop_col="推定人気乖離", suffix="_推定")
 
-    # レース単位の通知
+    # レース単位の通知（確定人気）
     if (filtered["単勝_条件"] == "✅").any():
-        st.success("✅ このレースは『単勝買い条件（乖離込み）』に合致する馬がいます")
+        st.success("✅ 単勝買い条件（確定人気乖離）に合致する馬がいます")
     elif (filtered["単勝_条件"] == "△").any():
-        st.warning("△ 単勝条件：上昇値は合致（人気乖離が条件なら買い）")
+        st.warning("△ 単勝条件：上昇値は合致（確定人気乖離が条件なら買い）")
 
     if (filtered["複勝_条件"] == "✅").any():
-        st.success("✅ このレースは『複勝買い条件（乖離込み）』に合致する馬がいます")
+        st.success("✅ 複勝買い条件（確定人気乖離）に合致する馬がいます")
     elif (filtered["複勝_条件"] == "△").any():
-        st.warning("△ 複勝条件：上昇値は合致（人気乖離が条件なら買い）")
+        st.warning("△ 複勝条件：上昇値は合致（確定人気乖離が条件なら買い）")
+
+    # レース単位の通知（推定人気）
+    if (filtered["単勝_条件_推定"] == "✅").any():
+        st.success("✅ 単勝買い条件（推定人気乖離）に合致する馬がいます")
+    elif (filtered["単勝_条件_推定"] == "△").any():
+        st.warning("△ 単勝条件：上昇値は合致（推定人気乖離が条件なら買い）")
+
+    if (filtered["複勝_条件_推定"] == "✅").any():
+        st.success("✅ 複勝買い条件（推定人気乖離）に合致する馬がいます")
+    elif (filtered["複勝_条件_推定"] == "△").any():
+        st.warning("△ 複勝条件：上昇値は合致（推定人気乖離が条件なら買い）")
 else:
     st.caption("※ レースレベルが取得できないため、買い条件判定を行いません。")
 
@@ -523,8 +573,12 @@ if "総合利益度" in df_all2.columns and "利益度上昇値" not in df_all2.
     _prev = pd.to_numeric(df_all2["前走総合利益度"], errors="coerce")
     df_all2["利益度上昇値"] = _cur - _prev
 
-if "人気" in df_all2.columns and "総合利益度順位" in df_all2.columns and "人気乖離" not in df_all2.columns:
-    df_all2["人気乖離"] = pd.to_numeric(df_all2["人気"], errors="coerce") - pd.to_numeric(df_all2["総合利益度順位"], errors="coerce")
+if "総合利益度順位" in df_all2.columns and "人気乖離" not in df_all2.columns:
+    _idx_rank = pd.to_numeric(df_all2["総合利益度順位"], errors="coerce")
+    _pop = pd.to_numeric(df_all2["人気"], errors="coerce") if "人気" in df_all2.columns else pd.Series(np.nan, index=df_all2.index)
+    _est = pd.to_numeric(df_all2["推定人気"], errors="coerce") if "推定人気" in df_all2.columns else pd.Series(np.nan, index=df_all2.index)
+    df_all2["人気乖離"] = _pop - _idx_rank
+    df_all2["推定人気乖離"] = _est - _idx_rank
 
 
 if "場所" in df_all2.columns:
@@ -559,18 +613,24 @@ for (p, r), g in df_all2.dropna(subset=["場所", "R"]).groupby(["場所", "R"])
         g2 = add_component_pass_count(g2)
         g2 = add_race_cv_local(g2)
 
-        # apply_buy_conditions は「戻り値型」でも「破壊的型」でも両対応
+        # 確定人気ベースの判定
         tmp_out = apply_buy_conditions(g2, lv, cond_win, cond_plc)
         if tmp_out is not None:
             g2 = tmp_out
+        badge = race_badge_from_horses(g2) if ("単勝_条件" in g2.columns and "複勝_条件" in g2.columns) else ""
 
-        # ここで列が無いなら、条件付与に失敗している
-        if ("単勝_条件" in g2.columns) and ("複勝_条件" in g2.columns):
-            badge = race_badge_from_horses(g2)
+        # 推定人気ベースの判定
+        tmp_est = apply_buy_conditions(g2, lv, cond_win_est, cond_plc_est, pop_col="推定人気乖離", suffix="_推定")
+        if tmp_est is not None:
+            g2_est = tmp_est
         else:
-            badge = ""
+            g2_est = g2
+        badge_est = race_badge_from_horses(g2_est, win_col="単勝_条件_推定", plc_col="複勝_条件_推定")
+    else:
+        badge = ""
+        badge_est = ""
 
-    race_summary[(p, r)] = {"prefix": prefix, "badge": badge}
+    race_summary[(p, r)] = {"prefix": prefix, "badge": badge, "badge_est": badge_est}
 
 # st.write("DEBUG race_summary sample:", list(race_summary.items())[5:10])
 
@@ -602,9 +662,11 @@ if race_date is not None and "場所" in df_all.columns and "R" in df_all.column
                         is_current = (p == place) and (r == race_no)
                         info = race_summary.get((p, int(r)), {})
 
-                        label = f"{info.get('plefix', '')}{r}R"
+                        label = f"{info.get('prefix', '')}{r}R"
                         if info.get("badge", ""):
-                            label = f"{label} {info['badge']}"
+                            label = f"{label}{info['badge']}"
+                        if info.get("badge_est", ""):
+                            label = f"{label} [推:{info['badge_est'].strip()}]"
                         
                         if is_current:
                             st.button(
@@ -666,9 +728,15 @@ mobile_cols = [
         "総合利益度",
         "前走総合利益度",
         "利益度上昇値",
+        "推定人気",
+        "人気ランク",
+        "人気乖離",
         "単勝_条件",
         "複勝_条件",
-        "総合利益度順位"
+        "推定人気乖離",
+        "単勝_条件_推定",
+        "複勝_条件_推定",
+        "総合利益度順位",
     ]
     if c in filtered.columns
 ]
@@ -703,6 +771,9 @@ else:
             "前走総合利益度": "{:.3f}",
             "利益度上昇値": "{:.3f}",
             "総合利益度順位": "{:.0f}",
+            "推定人気": "{:.0f}",
+            "人気乖離": "{:.0f}",
+            "推定人気乖離": "{:.0f}",
         }, na_rep="—")
         .apply(highlight_row_if_total_ge_17, axis=1)
     )

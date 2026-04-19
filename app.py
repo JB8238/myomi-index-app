@@ -15,7 +15,10 @@ DATA_DIR = Path("prof_result")
 PREP_DIR = Path("data")
 BUY_WIN_FULL_PATH = Path("./data/buy_conditions_full_win.csv")
 BUY_PLC_FULL_PATH = Path("./data/buy_conditions_full_place.csv")
+BUY_WIN_EST_PATH  = Path("./data/buy_conditions_full_win_推定.csv")
+BUY_PLC_EST_PATH  = Path("./data/buy_conditions_full_place_推定.csv")
 MERGED_RETURN_PATH = Path("./data/return_data_merged.csv")
+SMARTRC_DIR = Path("./data/smartrc")
 
 # パスワード認証
 def check_password():
@@ -160,6 +163,20 @@ if MERGED_RETURN_PATH.exists():
         validate="m:1",
     )
 
+# --- smartrc 推定人気・人気ランク のマージ ---
+smartrc_path = SMARTRC_DIR / f"smartrc_{kaisai_date}.csv"
+if smartrc_path.exists():
+    df_smartrc = pd.read_csv(smartrc_path, encoding="utf-8-sig")
+    df_smartrc["場所"] = df_smartrc["場所"].astype(str).str.replace("\u3000", " ").str.strip()
+    df_smartrc["R"] = pd.to_numeric(df_smartrc["R"], errors="coerce")
+    df_smartrc["馬番"] = pd.to_numeric(df_smartrc["馬番"], errors="coerce")
+    df_smartrc["推定人気"] = pd.to_numeric(df_smartrc["推定人気"], errors="coerce")
+    df = df.merge(
+        df_smartrc[["場所", "R", "馬番", "推定人気", "人気ランク"]],
+        on=["場所", "R", "馬番"],
+        how="left",
+    )
+
 if selected_file is None:
     st.error("prof_result にCSVが見つかりません")
     st.stop()
@@ -174,6 +191,11 @@ cond_win = load_buy_conditions(str(win_path), win_mtime)
 plc_path = BUY_PLC_FULL_PATH
 plc_mtime = plc_path.stat().st_mtime if plc_path.exists() else 0.0
 cond_plc = load_buy_conditions(str(plc_path), plc_mtime)
+
+win_est_mtime = BUY_WIN_EST_PATH.stat().st_mtime if BUY_WIN_EST_PATH.exists() else 0.0
+cond_win_est = load_buy_conditions(str(BUY_WIN_EST_PATH), win_est_mtime)
+plc_est_mtime = BUY_PLC_EST_PATH.stat().st_mtime if BUY_PLC_EST_PATH.exists() else 0.0
+cond_plc_est = load_buy_conditions(str(BUY_PLC_EST_PATH), plc_est_mtime)
 
 csv_pop = None
 if "母集団" in cond_win.columns and cond_win["母集団"].dropna().astype(str).str.strip().any():
@@ -199,13 +221,26 @@ if "総合利益度" in df.columns:
         - pd.to_numeric(df["前走総合利益度"], errors="coerce")
     )
 
-# 人気乖離（あれば）
-if {"人気", "総合利益度順位"}.issubset(df.columns):
-    df["人気"] = pd.to_numeric(df["人気"], errors="coerce")
+# 人気乖離（確定人気のみ）・推定人気乖離（推定人気のみ）
+if "総合利益度順位" in df.columns:
     df["総合利益度順位"] = pd.to_numeric(df["総合利益度順位"], errors="coerce")
-    df["人気乖離"] = df["人気"] - df["総合利益度順位"]
+    if "人気" in df.columns:
+        df["人気"] = pd.to_numeric(df["人気"], errors="coerce")
+    if "推定人気" in df.columns:
+        df["推定人気"] = pd.to_numeric(df["推定人気"], errors="coerce")
+    df["人気乖離"] = (
+        df["人気"] - df["総合利益度順位"]
+        if "人気" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    df["推定人気乖離"] = (
+        df["推定人気"] - df["総合利益度順位"]
+        if "推定人気" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
 else:
     df["人気乖離"] = np.nan
+    df["推定人気乖離"] = np.nan
 
 # 偏差値情報の付与
 df = add_race_deviation_scores(df)
@@ -231,9 +266,13 @@ for (place, r), g in df.groupby(["場所", "R"]):
     # 前提条件 (cv & 合格数) のための列を付与
     g_base = add_component_pass_count(g_base)
     g_base = add_race_cv_local(g_base)
+    # 確定人気ベースの判定
     g2 = apply_buy_conditions(g_base, lv, cond_win, cond_plc)
     badge = race_badge_from_horses(g2)
-    race_has_condition[(place, int(r))] = badge
+    # 推定人気ベースの判定（推定人気専用条件CSVを使用）
+    g2_est = apply_buy_conditions(g_base, lv, cond_win_est, cond_plc_est, pop_col="推定人気乖離", suffix="_推定")
+    badge_est = race_badge_from_horses(g2_est, win_col="単勝_条件_推定", plc_col="複勝_条件_推定")
+    race_has_condition[(place, int(r))] = (badge, badge_est)
 
 
 if not {"場所", "R"}.issubset(df.columns):
@@ -292,7 +331,7 @@ high17_map = (
 
 st.info("強調ルール：🔥 Lv4/Lv5  |  ⭐ Lv3 かつ 総合利益度>=17の馬がいるレース")
 st.caption(
-    "凡例（買い条件バッジ）: ✅=単勝&複勝が同一馬で条件合致 / 🅰️=単勝のみ / 🅱️=複勝のみ"
+    "凡例（買い条件バッジ）: ✅=単勝&複勝が同一馬で条件合致 / 🅰️=単勝のみ / 🅱️=複勝のみ  ※[推:〇〇]=推定人気ベースの判定"
 )
 st.caption(
     "※ このバッジ判定は index_view と同じロジックで、合格馬（総合利益度>=0）を対象にしています。"
@@ -348,8 +387,10 @@ for col, place in zip(cols, places):
                         icon = "📊"
                     
                     lv_text = f" {lv}" if lv else ""
-                    badge = race_has_condition.get((place, int(r)), "")
-                    label = f"{icon} {int(r)}R{lv_text}{badge}"
+                    badge_pair = race_has_condition.get((place, int(r)), ("", ""))
+                    badge, badge_est = badge_pair if isinstance(badge_pair, tuple) else (badge_pair, "")
+                    est_suffix = f" [推:{badge_est.strip()}]" if badge_est.strip() else ""
+                    label = f"{icon} {int(r)}R{lv_text}{badge}{est_suffix}"
 
                     st.page_link(
                         "pages/index_view.py",

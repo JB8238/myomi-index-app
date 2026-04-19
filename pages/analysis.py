@@ -86,9 +86,14 @@ def add_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
     out["複勝的中"] = pd.to_numeric(out.get("複勝"), errors="coerce") > 0
 
     if {"人気", "総合利益度順位"}.issubset(out.columns):
-        out["人気乖離"] = out["人気"] - out["総合利益度順位"]
+        out["人気乖離"] = pd.to_numeric(out["人気"], errors="coerce") - pd.to_numeric(out["総合利益度順位"], errors="coerce")
     else:
         out["人気乖離"] = np.nan
+
+    if {"推定人気", "総合利益度順位"}.issubset(out.columns):
+        out["推定人気乖離"] = pd.to_numeric(out["推定人気"], errors="coerce") - pd.to_numeric(out["総合利益度順位"], errors="coerce")
+    else:
+        out["推定人気乖離"] = np.nan
 
     return out
 
@@ -474,18 +479,38 @@ else:
         hide_index=True,
     )
 
-st.header("② 人気乖離（人気−総合利益度順位）× 回収率・的中率")
+bins_gap = [-999, -5, -1, 3, 7, 999]
+labels_gap = ["<=-5", "-4〜-1", "0〜3", "4〜7", "8+"]
+
+st.header("② 人気乖離（確定人気−総合利益度順位）× 回収率・的中率")
 if df_hm["人気乖離"].notna().sum() == 0:
     st.info("人気乖離が算出できるデータがありません（人気 or 総合利益度順位が不足）。")
 else:
-    bins_gap = [-999, -5, -1, 3, 7, 999]
-    labels_gap = ["<=-5", "-4〜-1", "0〜3", "4〜7", "8+"]
     df_hm["人気乖離区分"] = pd.cut(
         df_hm["人気乖離"], bins=bins_gap, labels=labels_gap, include_lowest=True
     )
     t2 = calc_roi_table(df_hm.dropna(subset=["人気乖離区分"]), "人気乖離区分")
     st.dataframe(
         t2.style.format({
+            "単勝的中率": "{:.1f}%",
+            "複勝的中率": "{:.1f}%",
+            "単勝回収率": "{:.1f}%",
+            "複勝回収率": "{:.1f}%",
+        }),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+st.header("② 推定人気乖離（推定人気−総合利益度順位）× 回収率・的中率")
+if df_hm["推定人気乖離"].notna().sum() == 0:
+    st.info("推定人気乖離が算出できるデータがありません（推定人気データが不足）。")
+else:
+    df_hm["推定人気乖離区分"] = pd.cut(
+        df_hm["推定人気乖離"], bins=bins_gap, labels=labels_gap, include_lowest=True
+    )
+    t2_est = calc_roi_table(df_hm.dropna(subset=["推定人気乖離区分"]), "推定人気乖離区分")
+    st.dataframe(
+        t2_est.style.format({
             "単勝的中率": "{:.1f}%",
             "複勝的中率": "{:.1f}%",
             "単勝回収率": "{:.1f}%",
@@ -531,8 +556,14 @@ elif tab == "複勝回収率":
 else:
     st.dataframe(pivot_n_index.style.format("{:.0f}"), use_container_width=True)
 
-# この後のヒートマップ描画は区分が両方揃っている行のみを対象
+# この後のヒートマップ・買い条件描画は区分が両方揃っている行のみを対象
+df_hm_pre = df_hm.copy()  # dropna 前のスナップショット（推定用に使う）
 df_hm = df_hm.dropna(subset=["上昇値区分", "人気乖離区分"])
+# 推定人気乖離区分 列が未生成の場合（推定データなし）は空DFにする
+if "推定人気乖離区分" in df_hm_pre.columns:
+    df_hm_est = df_hm_pre.dropna(subset=["上昇値区分", "推定人気乖離区分"])
+else:
+    df_hm_est = df_hm_pre.iloc[0:0].copy()
 
 
 st.header("④ コンポーネント合格数 × 回収率・的中率")
@@ -732,7 +763,43 @@ else:
 
 
 st.divider()
-st.header("■ Lv別・自動抽出された買い条件")
+st.header("⑦ 推定人気乖離ヒートマップ：Lv × 上昇値区分 × 推定人気乖離区分")
+
+metric_est = st.radio(
+    "表示する指標（推定）",
+    ["単勝ROI", "複勝ROI", "単勝的中率", "複勝的中率", "件数"],
+    horizontal=True,
+    key="metric_est",
+)
+
+hm_est = make_heatmap_table(df_hm_est, metric_est, gap_col="推定人気乖離区分")
+
+if hm_est.empty:
+    st.info("推定ヒートマップ表示に必要なデータが不足しています。")
+else:
+    hm_est_n = make_heatmap_table(df_hm_est, "件数", gap_col="推定人気乖離区分")
+
+    def apply_styles_est(data):
+        n_aligned = hm_est_n.reindex_like(data).fillna(0)
+        vals = data.values.astype(float)
+        ns = n_aligned.values.astype(float)
+        styles_arr = np.empty(vals.shape, dtype=object)
+        for i in range(vals.shape[0]):
+            for j in range(vals.shape[1]):
+                styles_arr[i, j] = colorize(vals[i, j], ns[i, j])
+        return pd.DataFrame(styles_arr, index=data.index, columns=data.columns)
+
+    if metric_est == "件数":
+        sty_est = hm_est.style.apply(apply_styles_est, axis=None).format("{:.0f}")
+    else:
+        sty_est = hm_est.style.apply(apply_styles_est, axis=None).format("{:.1f}")
+
+    st.caption("※ サンプル数が少ないセル（件数<5）は薄く表示します。")
+    st.dataframe(sty_est, use_container_width=True, height=480)
+
+
+st.divider()
+st.header("■ Lv別・自動抽出された買い条件（確定人気ベース）")
 
 cells = build_condition_cells(df_hm)
 
@@ -747,8 +814,6 @@ buy_win = extract_buy_conditions_win(
 if buy_win.empty:
     st.info("単勝の買い条件は見つかりませんでした。")
 else:
-    # 期間分割検証（6:4）を付与
-    # ※ df_hm はすでに前提フィルタ（3/3 & cv上位）などがかかった母集団
     buy_win = add_stability_flags(
         cond_df=buy_win,
         df_all=df_hm,
@@ -884,6 +949,150 @@ if not plc_sel.empty:
         mime="text/csv",
     ):
         st.success("✅ 選択した複勝買い条件をCSVに出力しました")
+
+
+# ==========================================================
+# ■ 推定人気ベースの買い条件
+# ==========================================================
+st.divider()
+st.header("■ Lv別・自動抽出された買い条件（推定人気ベース）")
+
+# 6:4検証は推定人気乖離区分で評価するため、df_hm_est の列名を一時的に合わせる
+df_hm_est_for_stability = df_hm_est.copy()
+if "推定人気乖離区分" in df_hm_est_for_stability.columns:
+    df_hm_est_for_stability["人気乖離区分"] = df_hm_est_for_stability["推定人気乖離区分"]
+
+cells_est = build_condition_cells(df_hm_est, gap_col="推定人気乖離区分")
+
+# ---- 単勝条件（推定） ----
+st.subheader("✅ 単勝・買い条件（推定人気）")
+buy_win_est = extract_buy_conditions_win(cells_est, min_roi=win_min_roi, min_n=win_min_n)
+
+if buy_win_est.empty:
+    st.info("単勝の買い条件（推定人気）は見つかりませんでした。")
+else:
+    buy_win_est = add_stability_flags(
+        cond_df=buy_win_est,
+        df_all=df_hm_est_for_stability,
+        bet_type="win",
+        min_roi=float(win_min_roi),
+        min_n=int(win_min_n),
+        date_col="開催日",
+    )
+    buy_win_est_disp = buy_win_est.copy()
+    buy_win_est_disp["出力"] = False
+
+    edited_win_est = st.data_editor(
+        buy_win_est_disp,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "出力": st.column_config.CheckboxColumn("CSV出力"),
+            "期間分割OK": st.column_config.CheckboxColumn("6:4検証OK"),
+        },
+        disabled=[c for c in buy_win_est_disp.columns if c != "出力"],
+    )
+
+# ---- 複勝条件（推定） ----
+st.subheader("✅ 複勝・買い条件（推定人気）")
+buy_place_est = extract_buy_conditions_place(cells_est, min_roi=plc_min_roi, min_n=plc_min_n)
+
+if buy_place_est.empty:
+    st.info("複勝の買い条件（推定人気）は見つかりませんでした。")
+else:
+    buy_place_est = add_stability_flags(
+        cond_df=buy_place_est,
+        df_all=df_hm_est_for_stability,
+        bet_type="place",
+        min_roi=float(plc_min_roi),
+        min_n=int(plc_min_n),
+        date_col="開催日",
+    )
+    buy_place_est_disp = buy_place_est.copy()
+    buy_place_est_disp["出力"] = False
+
+    edited_plc_est = st.data_editor(
+        buy_place_est_disp,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "出力": st.column_config.CheckboxColumn("CSV出力"),
+            "期間分割OK": st.column_config.CheckboxColumn("6:4検証OK"),
+        },
+        disabled=[c for c in buy_place_est_disp.columns if c != "出力"],
+    )
+
+    st.caption(
+        f"※ 単勝条件：ROI ≧ {win_min_roi:.0f}% / 件数 ≧ {win_min_n}、"
+        f"複勝条件：ROI ≧ {plc_min_roi:.0f}% / 件数 ≧ {plc_min_n}"
+    )
+
+st.divider()
+
+# CSV 出力（推定人気ベース）
+win_sel_est = edited_win_est[edited_win_est["出力"]].drop(columns="出力", errors="ignore") \
+    if "edited_win_est" in locals() else pd.DataFrame()
+plc_sel_est = edited_plc_est[edited_plc_est["出力"]].drop(columns="出力", errors="ignore") \
+    if "edited_plc_est" in locals() else pd.DataFrame()
+
+if win_sel_est.empty and plc_sel_est.empty:
+    st.warning("推定人気ベースの条件：CSVに出力する条件が選択されていません。")
+else:
+    up_bounds = make_bin_bounds(bins_up, labels_up, "上昇値区分")
+    gap_bounds = make_bin_bounds(bins_gap, labels_gap, "人気乖離区分")
+
+    if not win_sel_est.empty:
+        out_win_est = (
+            win_sel_est.merge(up_bounds, on="上昇値区分", how="left")
+            .merge(gap_bounds, on="人気乖離区分", how="left", suffixes=("_up", "_gap"))
+            .rename(columns={
+                "low_up": "up_low", "high_up": "up_high", "include_lowest_up": "up_include_lowest",
+                "low_gap": "gap_low", "high_gap": "gap_high", "include_lowest_gap": "gap_include_lowest",
+            })
+        )
+        out_win_est["母集団"] = population_mode
+        out_win_est["前提_合格数区分"] = "3/3（万全）" if use_comp33 else "ALL"
+        out_win_est["前提_混戦度指標"] = "cv"
+        out_win_est["前提_混戦度上位率"] = top_rate
+        out_win_est["前提_cv閾値"] = cv_threshold if cv_threshold is not None else np.nan
+
+    if not plc_sel_est.empty:
+        out_plc_est = (
+            plc_sel_est.merge(up_bounds, on="上昇値区分", how="left")
+            .merge(gap_bounds, on="人気乖離区分", how="left", suffixes=("_up", "_gap"))
+            .rename(columns={
+                "low_up": "up_low", "high_up": "up_high", "include_lowest_up": "up_include_lowest",
+                "low_gap": "gap_low", "high_gap": "gap_high", "include_lowest_gap": "gap_include_lowest",
+            })
+        )
+        out_plc_est["母集団"] = population_mode
+        out_plc_est["前提_合格数区分"] = "3/3（万全）" if use_comp33 else "ALL"
+        out_plc_est["前提_混戦度指標"] = "cv"
+        out_plc_est["前提_混戦度上位率"] = top_rate
+        out_plc_est["前提_cv閾値"] = cv_threshold if cv_threshold is not None else np.nan
+
+st.subheader("📤 買い条件CSV（推定人気ベース）の手動生成（ダウンロード）")
+if not win_sel_est.empty:
+    csv_bytes_win_est = df_to_csv_bytes(out_win_est)
+    if st.download_button(
+        label="⬇️ 単勝条件CSV（推定）をダウンロード",
+        data=csv_bytes_win_est,
+        file_name="buy_conditions_full_win_推定.csv",
+        mime="text/csv",
+        key="dl_win_est",
+    ):
+        st.success("✅ 選択した単勝買い条件（推定）をCSVに出力しました")
+
+if not plc_sel_est.empty:
+    csv_bytes_plc_est = df_to_csv_bytes(out_plc_est)
+    if st.download_button(
+        label="⬇️ 複勝条件CSV（推定）をダウンロード",
+        data=csv_bytes_plc_est,
+        file_name="buy_conditions_full_place_推定.csv",
+        mime="text/csv",
+        key="dl_plc_est",
+    ):
+        st.success("✅ 選択した複勝買い条件（推定）をCSVに出力しました")
 
 
 # =========================================================

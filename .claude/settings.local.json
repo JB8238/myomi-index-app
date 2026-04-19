@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import sys; [print\\(l\\) for l in sys.stdin]\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python -c ' *)",
+      "Bash(python -m py_compile scripts/fetch_smartrc.py)",
+      "Bash(python -m py_compile app.py)",
+      "Bash(python -m py_compile pages/index_view.py)"
+    ]
+  }
+}
