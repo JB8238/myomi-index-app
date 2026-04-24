@@ -6,7 +6,11 @@
       "Bash(python -c ' *)",
       "Bash(python -m py_compile scripts/fetch_smartrc.py)",
       "Bash(python -m py_compile app.py)",
-      "Bash(python -m py_compile pages/index_view.py)"
+      "Bash(python -m py_compile pages/index_view.py)",
+      "Bash(python -c \"import pandas as pd; df=pd.read_csv\\('data/2026/20260419/preprocessed_data_20260419.csv',encoding='utf-8',nrows=3\\); print\\(df.columns.tolist\\(\\)\\); print\\(df.head\\(2\\).to_string\\(\\)\\)\")",
+      "Bash(python -c \"import pandas as pd; df=pd.read_csv\\('data/2026/20260419/preprocessed_data_20260419.csv',encoding='utf-8'\\); print\\(df.columns.tolist\\(\\)\\)\")",
+      "Bash(python -c \"import pandas as pd; df=pd.read_csv\\('data/2026/20260419/preprocessed_data_20260419.csv',encoding='utf-8-sig'\\); print\\(df.columns.tolist\\(\\)\\); print\\(df.shape\\)\")",
+      "Bash(python -m py_compile core/loaders.py)"
     ]
   }
 }

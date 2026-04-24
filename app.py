@@ -9,6 +9,7 @@ import hmac
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions, race_badge_from_horses
 from core.features import add_component_pass_count, add_race_cv_local, add_race_deviation_scores, add_deviation_component_pass
 from core.history import find_prev_total, build_prof_history
+from core.loaders import load_smartrc_from_preprocessed
 
 
 DATA_DIR = Path("prof_result")
@@ -18,7 +19,6 @@ BUY_PLC_FULL_PATH = Path("./data/buy_conditions_full_place.csv")
 BUY_WIN_EST_PATH  = Path("./data/buy_conditions_full_win_推定.csv")
 BUY_PLC_EST_PATH  = Path("./data/buy_conditions_full_place_推定.csv")
 MERGED_RETURN_PATH = Path("./data/return_data_merged.csv")
-SMARTRC_DIR = Path("./data/smartrc")
 
 # パスワード認証
 def check_password():
@@ -87,16 +87,16 @@ def load_race_level_map(prep_root: Path, target_date: str | None) -> dict:
     """
     if target_date is None:
         return {}
-    
+
     year = target_date[:4]
     ymd_dir = prep_root / year / target_date
     if not ymd_dir.exists():
         return {}
-    
+
     files = list(ymd_dir.glob("preprocessed_data_*.csv"))
     if not files:
         return {}
-    
+
     # 同日内で複数あれば名前順で最後（安定）
     path = sorted(files)[-1]
 
@@ -105,7 +105,7 @@ def load_race_level_map(prep_root: Path, target_date: str | None) -> dict:
     required = {"場所", "R", "レースレベル"}
     if not required.issubset(dfp.columns):
         return {}
-    
+
     dfp = dfp.copy()
     dfp["R"] = pd.to_numeric(dfp["R"], errors="coerce")
     dfp["レースレベル"] = (
@@ -119,7 +119,7 @@ def load_race_level_map(prep_root: Path, target_date: str | None) -> dict:
         lv = g["レースレベル"].dropna()
         if not lv.empty:
             level_map[(place, int(r))] = lv.mode().iloc[0]
-    
+
     return level_map
 
 
@@ -145,10 +145,10 @@ if MERGED_RETURN_PATH.exists():
         if c in df_return.columns:
             df_return[c] = pd.to_numeric(df_return[c], errors="coerce")
     if "場所" in df_return.columns:
-        df_return["場所"] = df_return["場所"].astype(str).str.replace("\u3000", " ").str.strip()
+        df_return["場所"] = df_return["場所"].astype(str).str.replace("　", " ").str.strip()
 
     if "場所" in df.columns:
-        df["場所"] = df["場所"].astype(str).str.replace("\u3000", " ").str.strip()
+        df["場所"] = df["場所"].astype(str).str.replace("　", " ").str.strip()
     if "R" in df.columns:
         df["R"] = pd.to_numeric(df["R"], errors="coerce")
     if "馬番" in df.columns:
@@ -163,19 +163,14 @@ if MERGED_RETURN_PATH.exists():
         validate="m:1",
     )
 
-# --- smartrc 推定人気・人気ランク のマージ ---
-smartrc_path = SMARTRC_DIR / f"smartrc_{kaisai_date}.csv"
-if smartrc_path.exists():
-    df_smartrc = pd.read_csv(smartrc_path, encoding="utf-8-sig")
-    df_smartrc["場所"] = df_smartrc["場所"].astype(str).str.replace("\u3000", " ").str.strip()
-    df_smartrc["R"] = pd.to_numeric(df_smartrc["R"], errors="coerce")
-    df_smartrc["馬番"] = pd.to_numeric(df_smartrc["馬番"], errors="coerce")
-    df_smartrc["推定人気"] = pd.to_numeric(df_smartrc["推定人気"], errors="coerce")
-    df = df.merge(
-        df_smartrc[["場所", "R", "馬番", "推定人気", "人気ランク"]],
-        on=["場所", "R", "馬番"],
-        how="left",
-    )
+# --- preprocessed_data から 推定人気・人気ランク をマージ ---
+# return_data_merged 経由で既存の場合も preprocessed_data を正として上書き
+for _col in ["推定人気", "人気ランク"]:
+    if _col in df.columns:
+        df = df.drop(columns=[_col])
+_df_smartrc_prep = load_smartrc_from_preprocessed(PREP_DIR, int(kaisai_date))
+if not _df_smartrc_prep.empty:
+    df = df.merge(_df_smartrc_prep, on=["場所", "R", "馬番"], how="left")
 
 if selected_file is None:
     st.error("prof_result にCSVが見つかりません")
@@ -385,7 +380,7 @@ for col, place in zip(cols, places):
                         icon = "⭐"
                     else:
                         icon = "📊"
-                    
+
                     lv_text = f" {lv}" if lv else ""
                     badge_pair = race_has_condition.get((place, int(r)), ("", ""))
                     badge, badge_est = badge_pair if isinstance(badge_pair, tuple) else (badge_pair, "")

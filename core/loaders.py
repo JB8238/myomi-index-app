@@ -34,15 +34,21 @@ def load_preprocessed(data_dir: Path) -> pd.DataFrame:
         if not {"場所", "R", "馬番", "レースレベル"}.issubset(df0.columns):
             continue
 
-        tmp = df0[["場所", "R", "馬番", "レースレベル"]].copy()
+        keep_cols = ["場所", "R", "馬番", "レースレベル"]
+        for opt in ["推定人気", "人気ランク"]:
+            if opt in df0.columns:
+                keep_cols.append(opt)
+        tmp = df0[keep_cols].copy()
         tmp["開催日"] = d
 
         # 正規化
-        tmp["場所"] = tmp["場所"].astype(str).str.replace("\u3000", " ").str.strip()
+        tmp["場所"] = tmp["場所"].astype(str).str.replace("　", " ").str.strip()
         tmp["レースレベル"] = tmp["レースレベル"].astype(str).str.strip()
 
         tmp["R"] = pd.to_numeric(tmp["R"], errors="coerce")
         tmp["馬番"] = pd.to_numeric(tmp["馬番"], errors="coerce")
+        if "推定人気" in tmp.columns:
+            tmp["推定人気"] = pd.to_numeric(tmp["推定人気"], errors="coerce")
 
         rows.append(tmp)
 
@@ -82,7 +88,7 @@ def load_return(path: Path) -> pd.DataFrame:
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
     if "場所" in df.columns:
-        df["場所"] = df["場所"].astype(str).str.replace("\u3000", " ").str.strip()
+        df["場所"] = df["場所"].astype(str).str.replace("　", " ").str.strip()
 
     return df
 
@@ -102,16 +108,24 @@ def load_preprocessed_for_race(prep_dir: Path, target_date: int) -> pd.DataFrame
         if not {"場所", "R", "レースレベル"}.issubset(df0.columns):
             continue
 
-        tmp = df0[["場所", "R", "レースレベル"]].copy()
+        keep_cols = ["場所", "R", "馬番", "レースレベル"] if "馬番" in df0.columns else ["場所", "R", "レースレベル"]
+        for opt in ["推定人気", "人気ランク"]:
+            if opt in df0.columns:
+                keep_cols.append(opt)
+        tmp = df0[keep_cols].copy()
         tmp["開催日"] = d
 
         tmp["場所"] = (
             tmp["場所"].astype(str)
-            .str.replace("\u3000", " ")
+            .str.replace("　", " ")
             .str.strip()
         )
         tmp["R"] = pd.to_numeric(tmp["R"], errors="coerce")
         tmp["レースレベル"] = tmp["レースレベル"].astype(str).str.strip()
+        if "馬番" in tmp.columns:
+            tmp["馬番"] = pd.to_numeric(tmp["馬番"], errors="coerce")
+        if "推定人気" in tmp.columns:
+            tmp["推定人気"] = pd.to_numeric(tmp["推定人気"], errors="coerce")
 
         rows.append(tmp)
 
@@ -119,6 +133,52 @@ def load_preprocessed_for_race(prep_dir: Path, target_date: int) -> pd.DataFrame
         return pd.DataFrame(columns=["開催日", "場所", "R", "レースレベル"])
 
     return pd.concat(rows, ignore_index=True)
+
+
+@st.cache_data(show_spinner="📥 smartrc データ読み込み中…")
+def load_smartrc_from_preprocessed(prep_dir: Path, target_date: int) -> pd.DataFrame:
+    """
+    preprocessed_data_{target_date}.csv から推定人気・人気ランクを返す。
+    マージ済みでない場合（列が無い）は空 DataFrame を返す。
+    戻り値列: 場所, R, 馬番, 推定人気, 人気ランク
+    """
+    files = sorted(prep_dir.rglob("preprocessed_data_*.csv"))
+    rows = []
+
+    for p in files:
+        d = extract_yyyymmdd_from_name(p.name)
+        if d != target_date:
+            continue
+
+        df0 = pd.read_csv(p, encoding="utf-8")
+        df0.columns = [str(c).strip() for c in df0.columns]
+
+        required = {"場所", "R", "馬番"}
+        if not required.issubset(df0.columns):
+            continue
+        if not {"推定人気", "人気ランク"} & set(df0.columns):
+            # smartrc 列が無い（未マージ）
+            continue
+
+        keep_cols = ["場所", "R", "馬番"]
+        for opt in ["推定人気", "人気ランク"]:
+            if opt in df0.columns:
+                keep_cols.append(opt)
+        tmp = df0[keep_cols].copy()
+
+        tmp["場所"] = tmp["場所"].astype(str).str.replace("　", " ").str.strip()
+        tmp["R"] = pd.to_numeric(tmp["R"], errors="coerce")
+        tmp["馬番"] = pd.to_numeric(tmp["馬番"], errors="coerce")
+        if "推定人気" in tmp.columns:
+            tmp["推定人気"] = pd.to_numeric(tmp["推定人気"], errors="coerce")
+
+        rows.append(tmp)
+
+    if not rows:
+        return pd.DataFrame(columns=["場所", "R", "馬番", "推定人気", "人気ランク"])
+
+    return pd.concat(rows, ignore_index=True)
+
 
 @st.cache_data(show_spinner="📥 CSVを読み込んでいます…")
 def load_csv(path_str: str) -> pd.DataFrame:

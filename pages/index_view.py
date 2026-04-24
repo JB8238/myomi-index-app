@@ -8,7 +8,7 @@ import streamlit as st
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions, race_badge_from_horses
 from core.features import add_component_pass_count, add_race_cv_local, add_race_deviation_scores, add_deviation_component_pass
 from core.history import build_prof_history
-from core.loaders import load_preprocessed_for_race, load_csv, normalize_df
+from core.loaders import load_preprocessed_for_race, load_csv, normalize_df, load_smartrc_from_preprocessed
 
 DATA_DIR = Path("prof_result")  # 指定フォルダ（自動読み込み）
 PREP_DIR = Path("data")
@@ -17,7 +17,6 @@ BUY_WIN_FULL_PATH = Path("./data/buy_conditions_full_win.csv")
 BUY_PLC_FULL_PATH = Path("./data/buy_conditions_full_place.csv")
 BUY_WIN_EST_PATH  = Path("./data/buy_conditions_full_win_推定.csv")
 BUY_PLC_EST_PATH  = Path("./data/buy_conditions_full_place_推定.csv")
-SMARTRC_DIR = Path("./data/smartrc")
 
 RESULT_COLS = [
     "人気",
@@ -151,7 +150,6 @@ def render_cards(df: pd.DataFrame):
             st.write("**総合順位**")
             st.write("—" if pd.isna(total_rank) else f"{int(total_rank)} 位")
 
-        # 詳細は畳む（Expanderは大事）[8](https://kajiblo.com/streamlit-st-cache_data/)[9](https://note.com/pinyo/n/n94a46842bd1d)
         with st.expander("詳細（騎手/種牡馬/調教師）"):
             for label in [
                 ("騎手利益度", "騎手利益度順位"),
@@ -176,7 +174,7 @@ st.set_page_config(
     page_title="指数ビュー",
     page_icon="🏇",
     layout="wide",
-    initial_sidebar_state="auto",  # 小さい画面ではサイドバーが隠れる挙動が説明されています[10](https://www.johal.in/streamlit-columns-layout-responsive-design-2025/)
+    initial_sidebar_state="auto",
 )
 
 st.title("🏇 競馬 指数ビューア")
@@ -208,7 +206,7 @@ if race_date is not None:
     latest = pick_latest_by_filename(files_same_date) if files_same_date else None
 else:
     latest = pick_latest_by_filename(files)
-    
+
 if latest is None:
     st.error("prof_result/ に YYYYMMDD を含むCSVが見つかりません。")
     st.stop()
@@ -243,8 +241,6 @@ selected_file = st.sidebar.selectbox(
     key="file_select",
 )
 
-# 再読み込み（キャッシュクリア）
-# st.cache_data.clear() で全cacheをクリアできることがドキュメントにあります[1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)[6](https://js2iiu.com/2024/08/28/streamlit-01-cache/)
 if st.sidebar.button("🔄 再読み込み（キャッシュクリア）"):
     st.cache_data.clear()
 
@@ -272,7 +268,7 @@ def normalize_place(s):
     if pd.isna(s):
         return s
     return (
-        str(s).replace("\u3000", " ").strip()
+        str(s).replace("　", " ").strip()
     )
 
 if df_return is not None:
@@ -283,7 +279,7 @@ if df_return is not None:
         df_return["R"] = pd.to_numeric(df_return["R"], errors="coerce")
     if "馬番" in df_return.columns:
         df_return["馬番"] = pd.to_numeric(df_return["馬番"], errors="coerce")
-        
+
     # df 側もそろえる
     if "場所" in df.columns:
         df["場所"] = df["場所"].apply(normalize_place)
@@ -291,7 +287,7 @@ if df_return is not None:
         df["R"] = pd.to_numeric(df["R"], errors="coerce")
     if "馬番" in df.columns:
         df["馬番"] = pd.to_numeric(df["馬番"], errors="coerce")
-    
+
     if df_return is not None:
         df_ret_day = df_return[df_return["開催日"] == race_date].copy()
 
@@ -302,41 +298,35 @@ if df_return is not None:
             validate="m:1"
         )
 
-    # ---- smartrc 推定人気・人気ランク のマージ ----
+    # ---- preprocessed_data から 推定人気・人気ランク をマージ ----
     if race_date is not None:
-        smartrc_path = SMARTRC_DIR / f"smartrc_{race_date}.csv"
-        if smartrc_path.exists():
-            df_smartrc = pd.read_csv(smartrc_path, encoding="utf-8-sig")
-            df_smartrc["場所"] = df_smartrc["場所"].astype(str).str.replace("\u3000", " ").str.strip()
-            df_smartrc["R"] = pd.to_numeric(df_smartrc["R"], errors="coerce")
-            df_smartrc["馬番"] = pd.to_numeric(df_smartrc["馬番"], errors="coerce")
-            df_smartrc["推定人気"] = pd.to_numeric(df_smartrc["推定人気"], errors="coerce")
-            df = df.merge(
-                df_smartrc[["場所", "R", "馬番", "推定人気", "人気ランク"]],
-                on=["場所", "R", "馬番"],
-                how="left",
-            )
+        for _col in ["推定人気", "人気ランク"]:
+            if _col in df.columns:
+                df = df.drop(columns=[_col])
+        _df_smartrc_prep = load_smartrc_from_preprocessed(PREP_DIR, race_date)
+        if not _df_smartrc_prep.empty:
+            df = df.merge(_df_smartrc_prep, on=["場所", "R", "馬番"], how="left")
 
     # ---- 着順は数値比較するため数値化 ----
     if "着" in df.columns:
         df["着"] = pd.to_numeric(df["着"], errors="coerce")
-    
+
     # ---- return_data の着順を優先して統合 ----
     if "着_result" in df.columns:
         df["着"] = df["着_result"].combine_first(df.get("着"))
-    
+
     if "単勝" in df.columns:
         df["単勝"] = pd.to_numeric(df["単勝"], errors="coerce")
         df["単勝的中"] = df["単勝"] > 0
     else:
         df["単勝的中"] = False
-    
+
     if "複勝" in df.columns:
         df["複勝"] = pd.to_numeric(df["複勝"], errors="coerce")
         df["複勝的中"] = df["複勝"] > 0
     else:
         df["複勝的中"] = False
-    
+
     # 視認性用（任意）
     def _hit_label(row):
         if row.get("単勝的中", False):
@@ -344,7 +334,7 @@ if df_return is not None:
         if row.get("複勝的中", False):
             return "複勝"
         return "-"
-    
+
     df["的中種別"] = df.apply(_hit_label, axis=1)
 
 
@@ -366,7 +356,7 @@ if race_date is not None:
         df_race = df_prep[(df_prep["場所"] == place) & (df_prep["R"] == int(race_no))]
         if not df_race.empty:
             rl = df_race["レースレベル"].dropna().astype(str).mode().iloc[0]
-        
+
         df_all = df_all.merge(
             df_prep[["場所", "R", "レースレベル"]].drop_duplicates(),
             on=["場所", "R"],
@@ -445,8 +435,6 @@ if "馬名" in filtered.columns:
 
 # =========================================
 # 利益度上昇値・人気乖離算出
-# （利益度上昇値：総合利益度の整数部分 - 前走総合利益度）
-# （人気乖離：人気 - 総合利益度順位　※人気データがあるときのみ）
 # =========================================
 if "総合利益度" in filtered.columns:
     cur = pd.to_numeric(filtered["総合利益度"], errors="coerce")
@@ -546,7 +534,7 @@ else:
     st.caption("※ レースレベルが取得できないため、買い条件判定を行いません。")
 
 def _norm_place(x):
-    return str(x).replace("\u3000", " ").strip() if pd.notna(x) else x
+    return str(x).replace("　", " ").strip() if pd.notna(x) else x
 
 # ---- level_map を堅牢に作る ----
 level_map = {}
@@ -632,8 +620,6 @@ for (p, r), g in df_all2.dropna(subset=["場所", "R"]).groupby(["場所", "R"])
 
     race_summary[(p, r)] = {"prefix": prefix, "badge": badge, "badge_est": badge_est}
 
-# st.write("DEBUG race_summary sample:", list(race_summary.items())[5:10])
-
 # ---------------------------
 # 折り畳み式 レース選択UI（場所 × R）
 # ---------------------------
@@ -667,7 +653,7 @@ if race_date is not None and "場所" in df_all.columns and "R" in df_all.column
                             label = f"{label}{info['badge']}"
                         if info.get("badge_est", ""):
                             label = f"{label} [推:{info['badge_est'].strip()}]"
-                        
+
                         if is_current:
                             st.button(
                                 label,
@@ -755,14 +741,10 @@ if filtered_sorted.empty:
 else:
     # 総合利益度 >= 17 の行をハイライト
     def highlight_row_if_total_ge_17(row):
-        """
-        row: pandas Series（1行）
-        条件を満たす行は背景色を付与（列数分のCSS文字列を返す）
-        """
         if "総合利益度" in row.index and pd.notna(row["総合利益度"]) and row["総合利益度"] >= 17:
             return ["background-color: rgba(255, 193, 7, 0.25);"] * len(row)
         return [""] * len(row)
-    
+
     df_table = filtered_sorted[mobile_cols] if mobile_cols else filtered_sorted
     styler = (
         df_table.style
@@ -823,11 +805,11 @@ if st.session_state.get("show_result", False):
     if "単勝" in filtered.columns:
         hit = filtered[filtered["単勝"] > 0]
         st.metric("単勝 的中数", f"{len(hit)}頭")
-    
+
     if "複勝" in filtered.columns:
         place_hit = filtered[filtered["複勝"] > 0]
         st.metric("複勝 的中数", f"{len(place_hit)}頭")
-    
+
     if "単勝" in filtered.columns:
         st.metric("単勝 回収合計", int(filtered["単勝"].sum()))
 
@@ -845,7 +827,7 @@ if st.session_state.get("show_result", False):
         if "人気" in result_df.columns:
             result_df = result_df.sort_values(["人気", "単オッズ"], na_position="last")
 
-        
+
         styler = (
             result_df.style
             .format({
