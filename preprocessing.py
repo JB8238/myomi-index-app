@@ -101,13 +101,13 @@ def main():
         if zensou_df_pre.loc[i, "前走間隔"] == 0:
             l.append("連闘")
 
-        elif zensou_df_pre.loc[i, "前走間隔"] >= 12:
+        elif zensou_df_pre.loc[i, "前走間隔"] >= 9:
             l.append("休明初戦")
 
-        elif zensou_df_pre.loc[i, "前-2走前間隔"] >= 12:
+        elif zensou_df_pre.loc[i, "前-2走前間隔"] >= 9:
             l.append("休明2走")
 
-        elif zensou_df_pre.loc[i, "2-3走前間隔"] >= 12:
+        elif zensou_df_pre.loc[i, "2-3走前間隔"] >= 9:
             l.append("休明3走")
 
         else:
