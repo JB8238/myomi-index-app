@@ -259,9 +259,11 @@ df = pd.concat(frames, ignore_index=True)
 # =========================================================
 df_pre = load_preprocessed(PREP_DIR)
 
+_JOIN_KEYS = ["開催日", "場所", "R", "馬番"]
+_dup_cols = [c for c in df_pre.columns if c in df.columns and c not in _JOIN_KEYS]
 df = df.merge(
-    df_pre,
-    on=["開催日", "場所", "R", "馬番"],
+    df_pre.drop(columns=_dup_cols),
+    on=_JOIN_KEYS,
     how="left",
 )
 
