@@ -345,13 +345,22 @@ places = list(place_groups.keys())
 # 開催場の数だけ横カラムを作る
 cols = st.columns(len(places), gap="large")
 
-st.page_link(
-    "pages/analysis.py",
-    label="指数分析ページ",
-    icon="📈",
-    use_container_width=True,
-    query_params={"csv": selected_file.name}
-)
+col_link1, col_link2 = st.columns(2)
+with col_link1:
+    st.page_link(
+        "pages/analysis.py",
+        label="指数分析ページ",
+        icon="📈",
+        use_container_width=True,
+        query_params={"csv": selected_file.name}
+    )
+with col_link2:
+    st.page_link(
+        "pages/race_update.py",
+        label="開催当日 変更反映",
+        icon="🔄",
+        use_container_width=True,
+    )
 
 for col, place in zip(cols, places):
     with col:
