@@ -10,7 +10,11 @@
       "Bash(python -c \"import pandas as pd; df=pd.read_csv\\('data/2026/20260419/preprocessed_data_20260419.csv',encoding='utf-8',nrows=3\\); print\\(df.columns.tolist\\(\\)\\); print\\(df.head\\(2\\).to_string\\(\\)\\)\")",
       "Bash(python -c \"import pandas as pd; df=pd.read_csv\\('data/2026/20260419/preprocessed_data_20260419.csv',encoding='utf-8'\\); print\\(df.columns.tolist\\(\\)\\)\")",
       "Bash(python -c \"import pandas as pd; df=pd.read_csv\\('data/2026/20260419/preprocessed_data_20260419.csv',encoding='utf-8-sig'\\); print\\(df.columns.tolist\\(\\)\\); print\\(df.shape\\)\")",
-      "Bash(python -m py_compile core/loaders.py)"
+      "Bash(python -m py_compile core/loaders.py)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\yf_te\\\\OneDrive\\\\デスクトップ\\\\妙味度指数\" -Force)",
+      "Bash(Select-Object Name, FullName, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(python -c \"import sys; sys.argv=['', '20260131']; exec\\(open\\('prof_index_calculation.py'\\).read\\(\\).split\\('jockey_prof_list_df'\\)[0]\\)\")"
     ]
   }
 }

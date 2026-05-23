@@ -3,8 +3,9 @@ import numpy as np
 from pathlib import Path
 import math
 import os
+import sys
 
-kaisai_date = input("開催日を入力してください (例: 20240601): ")
+kaisai_date = sys.argv[1] if len(sys.argv) > 1 else input("開催日を入力してください (例: 20240601): ")
 year = kaisai_date[:4]
 
 INPUT_DIR = Path(".", "list", year)
