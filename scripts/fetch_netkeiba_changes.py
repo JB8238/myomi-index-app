@@ -24,7 +24,18 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-from playwright.async_api import async_playwright
+
+try:
+    from playwright.async_api import async_playwright
+except ImportError:
+    print(
+        "ERROR: playwright がインストールされていません。\n"
+        "以下のコマンドを実行してください:\n"
+        f"  {sys.executable} -m pip install playwright\n"
+        f"  {sys.executable} -m playwright install chromium",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 VENUE_CODE_MAP = {
     "01": "札幌", "02": "函館", "03": "福島", "04": "新潟",
