@@ -38,15 +38,30 @@ st.title("🔄 開催当日 変更反映")
 st.caption("馬場状態・騎手変更を netkeiba.com から取得し、利益度を再計算して GitHub へ push します。")
 
 # =========================================================
-# playwright インストール確認（ページ読み込み時に一度だけチェック）
+# Chromium ブラウザの自動インストール
+# Streamlit Cloud では pip install playwright だけではブラウザ本体が入らないため、
+# アプリ起動時に playwright install chromium を実行する。
+# @st.cache_resource でプロセス生存中は一度だけ実行される。
+# =========================================================
+@st.cache_resource(show_spinner="Chromium を準備中...")
+def _ensure_chromium() -> tuple[bool, str]:
+    """playwright install chromium を実行してブラウザ本体をインストールする。"""
+    r = subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return r.returncode == 0, (r.stdout + r.stderr).strip()
+
+# =========================================================
+# playwright インストール確認
 # =========================================================
 def _check_playwright() -> tuple[bool, str]:
-    """playwright と Chromium が使用可能かチェックする。"""
+    """playwright パッケージが import できるかチェックする。"""
     r = subprocess.run(
-        [
-            sys.executable, "-c",
-            "from playwright.async_api import async_playwright; print('OK')"
-        ],
+        [sys.executable, "-c", "from playwright.async_api import async_playwright; print('OK')"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if r.returncode != 0:
@@ -56,16 +71,27 @@ def _check_playwright() -> tuple[bool, str]:
 _pw_ok, _pw_err = _check_playwright()
 
 if not _pw_ok:
+    # playwright パッケージ自体が無い → requirements が適用されていない
     st.error(
         "**playwright がインストールされていません。**\n\n"
-        "以下のコマンドを実行してからページを再読み込みしてください。"
+        "GitHub へ push した後、Streamlit Cloud の管理画面で "
+        "**Reboot app** を実行してください。"
     )
-    st.code(
-        "pip install playwright\nplaywright install chromium",
-        language="bash",
-    )
-    st.expander("詳細エラー").code(_pw_err, language="text")
+    st.code("pip install playwright\nplaywright install chromium", language="bash")
+    with st.expander("詳細エラー"):
+        st.code(_pw_err, language="text")
     st.info(f"使用中の Python: `{sys.executable}`")
+    st.stop()
+
+# playwright はある → Chromium ブラウザ本体を自動インストール
+_chromium_ok, _chromium_log = _ensure_chromium()
+if not _chromium_ok:
+    st.error(
+        "**Chromium ブラウザのインストールに失敗しました。**\n\n"
+        "packages.txt が正しく設定されているか確認してください。"
+    )
+    with st.expander("インストールログ"):
+        st.code(_chromium_log, language="text")
     st.stop()
 
 # =========================================================
