@@ -47,7 +47,7 @@ st.caption("馬場状態・騎手変更を netkeiba.com から取得し、利益
 def _ensure_chromium() -> tuple[bool, str]:
     """playwright install chromium を実行してブラウザ本体をインストールする。"""
     r = subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+        [sys.executable, "-m", "playwright", "install", "chromium"],
         capture_output=True,
         text=True,
         encoding="utf-8",
