@@ -19,7 +19,10 @@
       "Bash(python -m playwright install --dry-run chromium)",
       "Bash(ls \"C:\\\\Users\\\\yf_te\\\\AppData\\\\Local\\\\ms-playwright\\\\chromium-1169\\\\chrome-win\\\\chrome.exe\" 2>&1)",
       "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
-      "Bash(pip show *)"
+      "Bash(pip show *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }
