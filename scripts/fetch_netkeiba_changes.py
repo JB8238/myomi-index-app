@@ -159,6 +159,10 @@ def get_race_ids_for_date(kaisai_date: str) -> list[str]:
     return race_ids
 
 
+# 最初の 1 レースのみ詳細な HTML 診断を出力するフラグ
+_shutuba_debug_done = False
+
+
 def get_shutuba_info(race_id: str) -> dict | None:
     """
     出馬表ページから馬場状態・騎手情報を取得する。
@@ -199,6 +203,31 @@ def get_shutuba_info(race_id: str) -> dict | None:
         "track_conditions": {},
         "jockeys": {},
     }
+
+    # --- 最初の1レースのみ HTML 構造を診断 ---
+    global _shutuba_debug_done
+    if not _shutuba_debug_done:
+        _shutuba_debug_done = True
+        all_classes = sorted(
+            {c for el in soup.find_all(class_=True) for c in (el.get("class") or [])}
+        )
+        interesting = [c for c in all_classes if any(
+            kw in c.lower() for kw in ("race", "shutuba", "jockey", "umaban", "num", "table", "horse")
+        )]
+        print(f"  [DEBUG] 主要クラス名: {interesting}")
+        jockey_links = soup.find_all("a", href=re.compile(r"/jockey/"))
+        print(f"  [DEBUG] /jockey/ リンク数: {len(jockey_links)}")
+        if jockey_links:
+            print(f"  [DEBUG] /jockey/ リンク例: {[a.get('href') for a in jockey_links[:3]]}")
+        rd = soup.find(class_="RaceData01")
+        print(f"  [DEBUG] .RaceData01 存在: {rd is not None}")
+        if rd:
+            print(f"  [DEBUG] .RaceData01 テキスト: {rd.get_text()[:300]}")
+        # テーブル候補を表示
+        tables = soup.find_all("table")
+        print(f"  [DEBUG] <table> 要素数: {len(tables)}")
+        for t in tables[:5]:
+            print(f"    class={t.get('class')} id={t.get('id')} rows={len(t.find_all('tr'))}")
 
     # --- 馬場状態の取得 ---
     # .RaceData01 のテキストに "芝：良" / "ダ：稍重" などが含まれる
