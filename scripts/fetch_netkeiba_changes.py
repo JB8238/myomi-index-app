@@ -4,6 +4,8 @@ scripts/fetch_netkeiba_changes.py
 netkeiba.com から当日の馬場状態・騎手情報を取得し、
 preprocessed_data_YYYYMMDD.csv との差分（変更点）を検出して JSON に保存する。
 
+requests + BeautifulSoup によるブラウザ不要の実装。
+
 Usage:
     python scripts/fetch_netkeiba_changes.py YYYYMMDD
 
@@ -16,26 +18,16 @@ Notes:
     - netkeiba の HTML 構造が変わった場合は get_shutuba_info() のセレクタを調整すること
 """
 
-import asyncio
 import json
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-
-try:
-    from playwright.async_api import async_playwright
-except ImportError:
-    print(
-        "ERROR: playwright がインストールされていません。\n"
-        "以下のコマンドを実行してください:\n"
-        f"  {sys.executable} -m pip install playwright\n"
-        f"  {sys.executable} -m playwright install chromium",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+import requests
+from bs4 import BeautifulSoup
 
 VENUE_CODE_MAP = {
     "01": "札幌", "02": "函館", "03": "福島", "04": "新潟",
@@ -45,6 +37,21 @@ VENUE_CODE_MAP = {
 
 TMP_DIR = Path("data/tmp")
 BASE_URL = "https://race.netkeiba.com"
+
+# ブラウザに見せかけたヘッダー
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Referer": "https://race.netkeiba.com/",
+}
+
+_SESSION = requests.Session()
+_SESSION.headers.update(_HEADERS)
 
 
 def decode_race_id(race_id: str) -> dict | None:
@@ -66,27 +73,27 @@ def normalize_condition(val: str) -> str:
     return val.replace("(暫定)", "").replace("(確定)", "").strip()
 
 
-async def get_race_ids_for_date(page, kaisai_date: str) -> list[str]:
+def get_race_ids_for_date(kaisai_date: str) -> list[str]:
     """
     レース一覧ページから当日の全 race_id リストを取得する。
     /race/shutuba.html?race_id=XXXXXXXXXXXX 形式のリンクを収集。
     """
     url = f"{BASE_URL}/top/race_list.html?kaisai_date={kaisai_date}"
     print(f"レース一覧を取得中: {url}")
+
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        await page.wait_for_timeout(2000)
+        resp = _SESSION.get(url, timeout=20)
+        resp.raise_for_status()
+        resp.encoding = resp.apparent_encoding or "utf-8"
     except Exception as e:
-        print(f"レース一覧ページ読み込みエラー: {e}")
+        print(f"レース一覧ページ取得エラー: {e}")
         return []
 
-    hrefs = await page.eval_on_selector_all(
-        'a[href*="shutuba.html"]',
-        "elements => elements.map(el => el.getAttribute('href'))",
-    )
-    race_ids = []
-    for href in hrefs:
-        if not href:
+    soup = BeautifulSoup(resp.text, "html.parser")
+    race_ids: list[str] = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "shutuba.html" not in href:
             continue
         m = re.search(r"race_id=(\d{12})", href)
         if m:
@@ -98,7 +105,7 @@ async def get_race_ids_for_date(page, kaisai_date: str) -> list[str]:
     return race_ids
 
 
-async def get_shutuba_info(page, race_id: str) -> dict | None:
+def get_shutuba_info(race_id: str) -> dict | None:
     """
     出馬表ページから馬場状態・騎手情報を取得する。
 
@@ -122,11 +129,14 @@ async def get_shutuba_info(page, race_id: str) -> dict | None:
     url = f"{BASE_URL}/race/shutuba.html?race_id={race_id}"
 
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-        await page.wait_for_timeout(1000)
+        resp = _SESSION.get(url, timeout=20)
+        resp.raise_for_status()
+        resp.encoding = resp.apparent_encoding or "utf-8"
     except Exception as e:
-        print(f"  ✗ {venue} {race_r}R: ページ読み込みエラー: {e}")
+        print(f"  ✗ {venue} {race_r}R: ページ取得エラー: {e}")
         return None
+
+    soup = BeautifulSoup(resp.text, "html.parser")
 
     result: dict = {
         "race_id": race_id,
@@ -138,66 +148,58 @@ async def get_shutuba_info(page, race_id: str) -> dict | None:
 
     # --- 馬場状態の取得 ---
     # .RaceData01 のテキストに "芝：良" / "ダ：稍重" などが含まれる
-    try:
-        header_el = page.locator(".RaceData01")
-        if await header_el.count() > 0:
-            header_text = await header_el.inner_text(timeout=5000)
-            # 全角コロン「：」と半角コロン「:」の両方に対応
-            for m in re.finditer(r"(芝|ダ)\s*[：:]\s*(良|稍重|重|不良)", header_text):
-                surface = m.group(1)
-                condition = m.group(2)
-                if surface not in result["track_conditions"]:
-                    result["track_conditions"][surface] = condition
-    except Exception:
-        pass
+    race_data_el = soup.find(class_="RaceData01")
+    if race_data_el:
+        text = race_data_el.get_text()
+        # 全角コロン「：」と半角コロン「:」の両方に対応
+        for m in re.finditer(r"(芝|ダ)\s*[：:]\s*(良|稍重|重|不良)", text):
+            surface, condition = m.group(1), m.group(2)
+            if surface not in result["track_conditions"]:
+                result["track_conditions"][surface] = condition
 
     # --- 騎手名の取得 ---
-    # テーブル行ごとに 馬番 と 騎手名（/jockey/ リンク）を取得する
-    try:
-        # まず標準的なテーブルセレクタを試す
-        row_sel = (
-            "#shutuba_table tbody tr, "
-            ".Shutuba_Table tbody tr, "
-            ".RaceTable01 tbody tr"
-        )
-        rows = await page.locator(row_sel).all()
+    # #shutuba_table, .Shutuba_Table, .RaceTable01 のいずれかを試す
+    table_body = (
+        soup.select_one("#shutuba_table tbody")
+        or soup.select_one(".Shutuba_Table tbody")
+        or soup.select_one(".RaceTable01 tbody")
+    )
 
-        for row in rows:
-            # 馬番の取得: .Umaban クラス優先、なければ2列目
+    if table_body:
+        for tr in table_body.find_all("tr"):
             umaban: int | None = None
-            umaban_els = await row.locator(".Umaban").all()
-            if umaban_els:
+
+            # .Umaban クラス優先
+            umaban_el = tr.find(class_="Umaban")
+            if umaban_el:
                 try:
-                    umaban = int((await umaban_els[0].inner_text()).strip())
+                    umaban = int(umaban_el.get_text().strip())
                 except ValueError:
                     pass
-            else:
-                cells = await row.locator("td").all()
+
+            # フォールバック: 2列目のテキスト
+            if umaban is None:
+                cells = tr.find_all("td")
                 if len(cells) >= 2:
                     try:
-                        umaban = int((await cells[1].inner_text()).strip())
+                        umaban = int(cells[1].get_text().strip())
                     except ValueError:
                         pass
 
             if umaban is None:
                 continue
 
-            # 騎手名の取得: /jockey/ URL のリンクテキスト優先
-            jockey_name: str = ""
-            jockey_links = await row.locator("a[href*='/jockey/']").all()
-            if jockey_links:
-                jockey_name = (await jockey_links[0].inner_text()).strip()
+            # /jockey/ URL のリンクテキストを騎手名として使用
+            jockey_link = tr.find("a", href=re.compile(r"/jockey/"))
+            if jockey_link:
+                jockey_name = jockey_link.get_text().strip()
             else:
                 # フォールバック: .Jockey クラスのセル
-                jockey_cells = await row.locator(".Jockey").all()
-                if jockey_cells:
-                    jockey_name = (await jockey_cells[0].inner_text()).strip()
+                jockey_cell = tr.find(class_="Jockey")
+                jockey_name = jockey_cell.get_text().strip() if jockey_cell else ""
 
             if jockey_name:
                 result["jockeys"][umaban] = jockey_name
-
-    except Exception as e:
-        print(f"  ⚠ 騎手取得エラー ({venue} {race_r}R): {e}")
 
     cond_str = ", ".join(f"{s}:{c}" for s, c in result["track_conditions"].items()) or "取得なし"
     print(f"  ✓ {venue} {race_r}R: 馬場=[{cond_str}], 騎手={len(result['jockeys'])}頭")
@@ -237,19 +239,17 @@ def detect_changes(kaisai_date: str, race_infos: list[dict]) -> dict:
         if venue not in venue_track:
             venue_track[venue] = {}
         for surface, cond in info["track_conditions"].items():
-            # 同一venue の同一面は最初の取得値を優先（レース番号が小さいものを先に取得するはず）
+            # 同一 venue の同一面は最初の取得値を優先
             if surface not in venue_track[venue]:
                 venue_track[venue][surface] = cond
         for umaban, jockey in info["jockeys"].items():
-            jockey_map[(venue, race_r, umaban)] = jockey
+            jockey_map[(venue, race_r, int(umaban))] = jockey
 
     # 馬場状態の変更検出 -------------------------------------------------
     track_changes: list[dict] = []
 
-    # (場所, 種別) 単位でグループ化して比較
     for (venue, surface_type), group in df.groupby(["場所", "種別"]):
-        # 種別→ netkeiba の馬場面キーに変換
-        # preprocessing.py と同様: 芝 → "芝道悪"、それ以外（ダート・障害）→ "ダ道悪"
+        # 種別 → netkeiba の馬場面キーに変換
         netkeiba_key = "芝" if surface_type == "芝" else "ダ"
 
         if venue not in venue_track or netkeiba_key not in venue_track[venue]:
@@ -306,54 +306,38 @@ def detect_changes(kaisai_date: str, race_infos: list[dict]) -> dict:
     }
 
 
-async def main(kaisai_date: str) -> None:
+def main(kaisai_date: str) -> None:
     TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-            ],
-        )
-        page = await browser.new_page()
+    race_ids = get_race_ids_for_date(kaisai_date)
+    if not race_ids:
+        print("レースが見つかりませんでした。")
+        return
 
-        # 全 race_id を取得
-        race_ids = await get_race_ids_for_date(page, kaisai_date)
-        if not race_ids:
-            print("レースが見つかりませんでした。")
-            await browser.close()
-            return
+    # preprocessed CSV が存在する場合、対象会場に絞る
+    year = kaisai_date[:4]
+    csv_path = Path(f"data/{year}/{kaisai_date}/preprocessed_data_{kaisai_date}.csv")
+    target_venues: set[str] = set()
+    if csv_path.exists():
+        df_prep = pd.read_csv(csv_path, encoding="utf-8")
+        target_venues = set(df_prep["場所"].unique())
+        race_ids = [
+            rid for rid in race_ids
+            if (d := decode_race_id(rid)) and d["場所"] in target_venues
+        ]
+        print(f"対象会場: {', '.join(sorted(target_venues))}")
+        print(f"対象レース数: {len(race_ids)}")
 
-        # preprocessed CSV が存在する場合、対象会場に絞る
-        year = kaisai_date[:4]
-        csv_path = Path(f"data/{year}/{kaisai_date}/preprocessed_data_{kaisai_date}.csv")
-        target_venues: set[str] = set()
-        if csv_path.exists():
-            df_prep = pd.read_csv(csv_path, encoding="utf-8")
-            target_venues = set(df_prep["場所"].unique())
-            race_ids = [
-                rid for rid in race_ids
-                if (d := decode_race_id(rid)) and d["場所"] in target_venues
-            ]
-            print(f"対象会場: {', '.join(sorted(target_venues))}")
-            print(f"対象レース数: {len(race_ids)}")
-
-        # 各レースの出馬表を取得
-        race_infos: list[dict] = []
-        for i, race_id in enumerate(race_ids, 1):
-            decoded = decode_race_id(race_id)
-            label = f"{decoded['場所']} {decoded['R']}R" if decoded else race_id
-            print(f"[{i}/{len(race_ids)}] {label} (race_id={race_id})")
-            info = await get_shutuba_info(page, race_id)
-            if info:
-                race_infos.append(info)
-            await asyncio.sleep(0.5)  # サーバー負荷軽減
-
-        await browser.close()
+    # 各レースの出馬表を取得
+    race_infos: list[dict] = []
+    for i, race_id in enumerate(race_ids, 1):
+        decoded = decode_race_id(race_id)
+        label = f"{decoded['場所']} {decoded['R']}R" if decoded else race_id
+        print(f"[{i}/{len(race_ids)}] {label} (race_id={race_id})")
+        info = get_shutuba_info(race_id)
+        if info:
+            race_infos.append(info)
+        time.sleep(0.5)  # サーバー負荷軽減
 
     print("\n変更を検出中...")
     changes = detect_changes(kaisai_date, race_infos)
@@ -375,4 +359,4 @@ if __name__ == "__main__":
     if len(_date) != 8 or not _date.isdigit():
         print("日付の形式が正しくありません。例: 20260523")
         sys.exit(1)
-    asyncio.run(main(_date))
+    main(_date)
