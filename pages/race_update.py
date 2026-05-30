@@ -265,7 +265,13 @@ if "changes" in st.session_state:
                 push_logs.append(f"git commit: {commit_r.stdout.strip()}")
 
                 if commit_r.returncode != 0:
-                    if "nothing to commit" in (commit_r.stdout + commit_r.stderr):
+                    commit_out = commit_r.stdout + commit_r.stderr
+                    _no_change_msgs = (
+                        "nothing to commit",
+                        "no changes added to commit",
+                        "nothing added to commit",
+                    )
+                    if any(msg in commit_out for msg in _no_change_msgs):
                         st.info("コミットする変更がありませんでした（すでに最新の状態です）。")
                     else:
                         st.error("コミットエラー")
