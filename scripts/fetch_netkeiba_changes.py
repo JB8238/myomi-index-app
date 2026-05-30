@@ -159,16 +159,15 @@ def get_race_ids_for_date(kaisai_date: str) -> list[str]:
     return race_ids
 
 
-# 最初の 1 レースのみ詳細な HTML 診断を出力するフラグ
-_shutuba_debug_done = False
-
-
 def get_shutuba_info(race_id: str) -> dict | None:
     """
     出馬表ページから馬場状態・騎手情報を取得する。
 
-    馬場状態: .RaceData01 のテキストから「芝：良」「ダ：稍重」パターンを抽出
+    馬場状態: .RaceData01 のテキストから以下の2パターンを組み合わせて抽出
+        - 馬場面: "ダ1400m" / "芝2000m" → 芝 or ダ
+        - 馬場状態: "馬場:良" / "馬場：稍重" → 良|稍重|重|不良
     騎手名:   /jockey/ へのリンクテキストを馬番と紐付けて取得
+              ※ html.parser は <tbody> を自動挿入しないため tbody なしでテーブルを検索
 
     Returns:
         {
@@ -186,15 +185,12 @@ def get_shutuba_info(race_id: str) -> dict | None:
     venue, race_r = decoded["場所"], decoded["R"]
     url = f"{BASE_URL}/race/shutuba.html?race_id={race_id}"
 
-    try:
-        resp = _SESSION.get(url, timeout=20)
-        resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or "utf-8"
-    except Exception as e:
-        print(f"  ✗ {venue} {race_r}R: ページ取得エラー: {e}")
+    html = _fetch_html(url)
+    if html is None:
+        print(f"  ✗ {venue} {race_r}R: ページ取得失敗")
         return None
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
 
     result: dict = {
         "race_id": race_id,
@@ -204,56 +200,36 @@ def get_shutuba_info(race_id: str) -> dict | None:
         "jockeys": {},
     }
 
-    # --- 最初の1レースのみ HTML 構造を診断 ---
-    global _shutuba_debug_done
-    if not _shutuba_debug_done:
-        _shutuba_debug_done = True
-        all_classes = sorted(
-            {c for el in soup.find_all(class_=True) for c in (el.get("class") or [])}
-        )
-        interesting = [c for c in all_classes if any(
-            kw in c.lower() for kw in ("race", "shutuba", "jockey", "umaban", "num", "table", "horse")
-        )]
-        print(f"  [DEBUG] 主要クラス名: {interesting}")
-        jockey_links = soup.find_all("a", href=re.compile(r"/jockey/"))
-        print(f"  [DEBUG] /jockey/ リンク数: {len(jockey_links)}")
-        if jockey_links:
-            print(f"  [DEBUG] /jockey/ リンク例: {[a.get('href') for a in jockey_links[:3]]}")
-        rd = soup.find(class_="RaceData01")
-        print(f"  [DEBUG] .RaceData01 存在: {rd is not None}")
-        if rd:
-            print(f"  [DEBUG] .RaceData01 テキスト: {rd.get_text()[:300]}")
-        # テーブル候補を表示
-        tables = soup.find_all("table")
-        print(f"  [DEBUG] <table> 要素数: {len(tables)}")
-        for t in tables[:5]:
-            print(f"    class={t.get('class')} id={t.get('id')} rows={len(t.find_all('tr'))}")
-
     # --- 馬場状態の取得 ---
-    # .RaceData01 のテキストに "芝：良" / "ダ：稍重" などが含まれる
+    # .RaceData01 テキスト例:
+    #   "09:50発走 / ダ1400m (左)\n/ 天候:晴\n/ 馬場:良"
+    #   "10:05発走 / 芝2000m\n/ 天候:曇\n/ 馬場:稍重"
     race_data_el = soup.find(class_="RaceData01")
     if race_data_el:
         text = race_data_el.get_text()
-        # 全角コロン「：」と半角コロン「:」の両方に対応
-        for m in re.finditer(r"(芝|ダ)\s*[：:]\s*(良|稍重|重|不良)", text):
-            surface, condition = m.group(1), m.group(2)
-            if surface not in result["track_conditions"]:
-                result["track_conditions"][surface] = condition
+        # 馬場状態: "馬場:良" / "馬場：稍重"
+        cond_m = re.search(r"馬場[：:]\s*(良|稍重|重|不良)", text)
+        # 馬場面: "ダXXXXm" or "芝XXXXm"
+        surf_m = re.search(r"(芝|ダ)\d+m", text)
+        if cond_m and surf_m:
+            result["track_conditions"][surf_m.group(1)] = cond_m.group(1)
 
     # --- 騎手名の取得 ---
-    # #shutuba_table, .Shutuba_Table, .RaceTable01 のいずれかを試す
-    table_body = (
-        soup.select_one("#shutuba_table tbody")
-        or soup.select_one(".Shutuba_Table tbody")
-        or soup.select_one(".RaceTable01 tbody")
+    # html.parser は <tbody> を暗黙挿入しないため tbody なしでテーブルを取得する
+    table = (
+        soup.select_one(".Shutuba_Table")
+        or soup.select_one(".ShutubaTable")
+        or soup.select_one(".RaceTable01")
     )
 
-    if table_body:
-        for tr in table_body.find_all("tr"):
+    if table:
+        for tr in table.find_all("tr"):
             umaban: int | None = None
 
-            # .Umaban クラス優先
-            umaban_el = tr.find(class_="Umaban")
+            # .Umaban クラス優先（Umaban1, Umaban2 等の番号付きも対応）
+            umaban_el = tr.find(class_="Umaban") or tr.find(
+                class_=re.compile(r"^Umaban\d+$")
+            )
             if umaban_el:
                 try:
                     umaban = int(umaban_el.get_text().strip())
@@ -273,6 +249,7 @@ def get_shutuba_info(race_id: str) -> dict | None:
                 continue
 
             # /jockey/ URL のリンクテキストを騎手名として使用
+            # db.netkeiba.com/jockey/result/recent/XXXXX/ 形式にも対応
             jockey_link = tr.find("a", href=re.compile(r"/jockey/"))
             if jockey_link:
                 jockey_name = jockey_link.get_text().strip()
