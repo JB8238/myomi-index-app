@@ -225,16 +225,42 @@ if "changes" in st.session_state:
                 push_logs: list[str] = []
                 push_error = False
 
+                # ── GitHub Personal Access Token ──────────────────────────
+                # Streamlit Cloud の Secrets に以下を設定してください:
+                #   [github]
+                #   token = "ghp_xxxxxxxxxxxx"
+                try:
+                    gh_token = st.secrets["github"]["token"]
+                except Exception:
+                    gh_token = ""
+
+                if not gh_token:
+                    st.error(
+                        "GitHub トークンが設定されていません。\n\n"
+                        "Streamlit Cloud → App settings → Secrets に以下を追加してください:\n"
+                        "```\n[github]\ntoken = \"ghp_xxxxxxxxxxxx\"\n```"
+                    )
+                    st.stop()
+
                 # git user identity を設定（Streamlit Cloud は未設定のため必須）
                 for cfg_cmd in [
                     ["git", "config", "user.email", "yf.tdr0322@gmail.com"],
                     ["git", "config", "user.name", "myomi-index-app"],
                 ]:
-                    subprocess.run(
-                        cfg_cmd,
-                        capture_output=True,
-                        cwd=cwd,
-                    )
+                    subprocess.run(cfg_cmd, capture_output=True, cwd=cwd)
+
+                # remote URL にトークンを埋め込んで認証（HTTPS push 用）
+                url_r = subprocess.run(
+                    ["git", "remote", "get-url", "origin"],
+                    capture_output=True, text=True, encoding="utf-8", cwd=cwd,
+                )
+                remote_url = url_r.stdout.strip()
+                # https://github.com/... → https://TOKEN@github.com/...
+                auth_url = remote_url.replace("https://", f"https://{gh_token}@")
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", auth_url],
+                    capture_output=True, cwd=cwd,
+                )
 
                 # git add
                 for f in push_files:
@@ -264,15 +290,16 @@ if "changes" in st.session_state:
                 )
                 push_logs.append(f"git commit: {commit_r.stdout.strip()}")
 
+                _no_change_msgs = (
+                    "nothing to commit",
+                    "no changes added to commit",
+                    "nothing added to commit",
+                )
                 if commit_r.returncode != 0:
                     commit_out = commit_r.stdout + commit_r.stderr
-                    _no_change_msgs = (
-                        "nothing to commit",
-                        "no changes added to commit",
-                        "nothing added to commit",
-                    )
                     if any(msg in commit_out for msg in _no_change_msgs):
                         st.info("コミットする変更がありませんでした（すでに最新の状態です）。")
+                        push_error = True  # 変更なしのため push もスキップ
                     else:
                         st.error("コミットエラー")
                         st.code(commit_r.stderr, language="text")
@@ -287,6 +314,7 @@ if "changes" in st.session_state:
                         errors="replace",
                         cwd=cwd,
                     )
+                    # ログにはトークンを含む URL を出さない
                     push_logs.append(
                         f"git push: {(push_r.stdout + push_r.stderr).strip()}"
                     )
