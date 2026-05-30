@@ -76,7 +76,9 @@ def normalize_condition(val: str) -> str:
 def get_race_ids_for_date(kaisai_date: str) -> list[str]:
     """
     レース一覧ページから当日の全 race_id リストを取得する。
-    /race/shutuba.html?race_id=XXXXXXXXXXXX 形式のリンクを収集。
+
+    HTML 全体から race_id=XXXXXXXXXXXX パターンを直接検索するため、
+    リンクが JavaScript 生成であっても script タグ内等から抽出できる。
     """
     url = f"{BASE_URL}/top/race_list.html?kaisai_date={kaisai_date}"
     print(f"レース一覧を取得中: {url}")
@@ -84,22 +86,37 @@ def get_race_ids_for_date(kaisai_date: str) -> list[str]:
     try:
         resp = _SESSION.get(url, timeout=20)
         resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or "utf-8"
+        # netkeiba は EUC-JP の場合がある。apparent_encoding を優先しつつフォールバック
+        for enc in (resp.apparent_encoding, "euc-jp", "utf-8", "shift-jis"):
+            if not enc:
+                continue
+            try:
+                html = resp.content.decode(enc)
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+        else:
+            html = resp.text
     except Exception as e:
         print(f"レース一覧ページ取得エラー: {e}")
         return []
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    print(f"  レスポンス: {resp.status_code}, {len(html)} 文字")
+
+    # HTML テキスト全体（<a href>, onclick, script タグ含む）から race_id を抽出
+    # URL エンコード (%3D) にも対応
     race_ids: list[str] = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "shutuba.html" not in href:
-            continue
-        m = re.search(r"race_id=(\d{12})", href)
-        if m:
-            rid = m.group(1)
-            if rid not in race_ids:
-                race_ids.append(rid)
+    for m in re.finditer(r"race_id[=%3D]+(\d{12})", html):
+        rid = m.group(1)
+        if rid not in race_ids:
+            race_ids.append(rid)
+
+    if not race_ids:
+        # デバッグ: ページ構造を把握するため HTML 先頭を出力
+        print("  [DEBUG] race_id が見つかりませんでした。HTML 先頭 1000 文字:")
+        snippet = html[:1000].replace("\n", " ").replace("\r", "")
+        for i in range(0, len(snippet), 120):
+            print(f"    {snippet[i:i+120]}")
 
     print(f"  → {len(race_ids)} レースを発見")
     return race_ids
