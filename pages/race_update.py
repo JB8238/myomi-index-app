@@ -225,6 +225,17 @@ if "changes" in st.session_state:
                 push_logs: list[str] = []
                 push_error = False
 
+                # git user identity を設定（Streamlit Cloud は未設定のため必須）
+                for cfg_cmd in [
+                    ["git", "config", "user.email", "yf.tdr0322@gmail.com"],
+                    ["git", "config", "user.name", "myomi-index-app"],
+                ]:
+                    subprocess.run(
+                        cfg_cmd,
+                        capture_output=True,
+                        cwd=cwd,
+                    )
+
                 # git add
                 for f in push_files:
                     r = subprocess.run(
