@@ -159,14 +159,45 @@ def get_race_ids_for_date(kaisai_date: str) -> list[str]:
     return race_ids
 
 
+# netkeiba が騎手変更を赤字で表示する際のスタイル
+_JOCKEY_CHANGE_RE = re.compile(r"color\s*:\s*#f20\b", re.IGNORECASE)
+
+
+def _jockey_cell_is_changed(tr) -> bool:
+    """
+    出馬表の行（<tr>）内の騎手エリアに変更色 (color:#f20) があるか確認する。
+    .Jockey セル、/jockey/ リンク、およびその子孫要素を対象とする。
+    """
+    # .Jockey クラスのセルを確認
+    jockey_td = tr.find(class_="Jockey")
+    if jockey_td:
+        for el in [jockey_td] + jockey_td.find_all(True):
+            if _JOCKEY_CHANGE_RE.search(el.get("style", "")):
+                return True
+    # /jockey/ リンクとその親要素（最大3レベル）を確認
+    jockey_a = tr.find("a", href=re.compile(r"/jockey/"))
+    if jockey_a:
+        el = jockey_a
+        for _ in range(3):
+            if _JOCKEY_CHANGE_RE.search(el.get("style", "")):
+                return True
+            parent = el.parent
+            if parent is None:
+                break
+            el = parent
+    return False
+
+
 def get_shutuba_info(race_id: str) -> dict | None:
     """
-    出馬表ページから馬場状態・騎手情報を取得する。
+    出馬表ページから馬場状態・騎手変更情報を取得する。
 
     馬場状態: .RaceData01 のテキストから以下の2パターンを組み合わせて抽出
         - 馬場面: "ダ1400m" / "芝2000m" → 芝 or ダ
         - 馬場状態: "馬場:良" / "馬場：稍重" → 良|稍重|重|不良
-    騎手名:   /jockey/ へのリンクテキストを馬番と紐付けて取得
+    騎手変更: style="color:#f20" (赤字) の行のみを変更検出対象とする
+              JRA-VAN と netkeiba の名前表記差異による誤検出を防ぐため、
+              名前比較ではなく赤字スタイルをトリガーとして使用する。
               ※ html.parser は <tbody> を自動挿入しないため tbody なしでテーブルを検索
 
     Returns:
@@ -175,7 +206,7 @@ def get_shutuba_info(race_id: str) -> dict | None:
             "場所": str,
             "R": int,
             "track_conditions": {"芝": str, "ダ": str},   # 取得できたもののみ
-            "jockeys": {馬番(int): 騎手名(str)}
+            "jockeys": {馬番(int): 騎手名(str)}            # 赤字の行のみ（変更確定）
         }
     """
     decoded = decode_race_id(race_id)
@@ -248,7 +279,11 @@ def get_shutuba_info(race_id: str) -> dict | None:
             if umaban is None:
                 continue
 
-            # /jockey/ URL のリンクテキストを騎手名として使用
+            # 赤字スタイル (color:#f20) がある行のみ変更対象として収集
+            if not _jockey_cell_is_changed(tr):
+                continue
+
+            # /jockey/ リンクテキストを騎手名として使用
             # db.netkeiba.com/jockey/result/recent/XXXXX/ 形式にも対応
             jockey_link = tr.find("a", href=re.compile(r"/jockey/"))
             if jockey_link:
@@ -335,6 +370,8 @@ def detect_changes(kaisai_date: str, race_infos: list[dict]) -> dict:
             )
 
     # 騎手変更の検出 -----------------------------------------------------
+    # jockey_map は赤字スタイル (color:#f20) の行のみ収録 → 全件が確定変更
+    # 名前比較は行わない（JRA-VAN と netkeiba の表記差異による誤検出を防ぐため）
     jockey_changes: list[dict] = []
 
     for _, row in df.iterrows():
@@ -346,17 +383,16 @@ def detect_changes(kaisai_date: str, race_infos: list[dict]) -> dict:
             continue
         new_jockey = jockey_map[key].strip()
         current_jockey = str(row.get("騎手名", "")).strip()
-        if new_jockey and new_jockey != current_jockey:
-            jockey_changes.append(
-                {
-                    "場所": venue,
-                    "R": race_r,
-                    "馬番": umaban,
-                    "馬名": row.get("馬名", ""),
-                    "旧騎手名": current_jockey,
-                    "新騎手名": new_jockey,
-                }
-            )
+        jockey_changes.append(
+            {
+                "場所": venue,
+                "R": race_r,
+                "馬番": umaban,
+                "馬名": row.get("馬名", ""),
+                "旧騎手名": current_jockey,
+                "新騎手名": new_jockey,
+            }
+        )
 
     return {
         "kaisai_date": kaisai_date,
