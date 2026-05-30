@@ -1,6 +1,5 @@
 # githubに連携したくないファイルを指定
 __pycache__
 *.pyc
-/index
 /list
 .ipynb_checkpoints
