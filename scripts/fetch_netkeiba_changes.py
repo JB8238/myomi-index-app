@@ -73,48 +73,85 @@ def normalize_condition(val: str) -> str:
     return val.replace("(暫定)", "").replace("(確定)", "").strip()
 
 
-def get_race_ids_for_date(kaisai_date: str) -> list[str]:
-    """
-    レース一覧ページから当日の全 race_id リストを取得する。
-
-    HTML 全体から race_id=XXXXXXXXXXXX パターンを直接検索するため、
-    リンクが JavaScript 生成であっても script タグ内等から抽出できる。
-    """
-    url = f"{BASE_URL}/top/race_list.html?kaisai_date={kaisai_date}"
-    print(f"レース一覧を取得中: {url}")
-
+def _fetch_html(url: str) -> str | None:
+    """URL を取得して EUC-JP / UTF-8 を自動判定しながらデコードして返す。"""
     try:
         resp = _SESSION.get(url, timeout=20)
         resp.raise_for_status()
-        # netkeiba は EUC-JP の場合がある。apparent_encoding を優先しつつフォールバック
         for enc in (resp.apparent_encoding, "euc-jp", "utf-8", "shift-jis"):
             if not enc:
                 continue
             try:
-                html = resp.content.decode(enc)
-                break
+                return resp.content.decode(enc)
             except (UnicodeDecodeError, LookupError):
                 continue
-        else:
-            html = resp.text
+        return resp.text
     except Exception as e:
-        print(f"レース一覧ページ取得エラー: {e}")
-        return []
+        print(f"  取得エラー ({url}): {e}")
+        return None
 
-    print(f"  レスポンス: {resp.status_code}, {len(html)} 文字")
 
-    # HTML テキスト全体（<a href>, onclick, script タグ含む）から race_id を抽出
-    # URL エンコード (%3D) にも対応
+def _extract_race_ids(html: str, year: str) -> list[str]:
+    """HTML テキストから year で始まる 12 桁の race_id を抽出する。"""
     race_ids: list[str] = []
-    for m in re.finditer(r"race_id[=%3D]+(\d{12})", html):
+    # パターン 1: race_id=XXXXXXXXXXXX (クエリパラメータ形式)
+    for m in re.finditer(r"race_id[=%%\"']+(\d{12})", html):
         rid = m.group(1)
-        if rid not in race_ids:
+        if rid.startswith(year) and rid not in race_ids:
             race_ids.append(rid)
-
+    # パターン 2: 12桁数値がそのまま埋め込まれている (JavaScript / JSON / data 属性)
     if not race_ids:
-        # デバッグ: ページ構造を把握するため HTML 先頭を出力
-        print("  [DEBUG] race_id が見つかりませんでした。HTML 先頭 1000 文字:")
-        snippet = html[:1000].replace("\n", " ").replace("\r", "")
+        for m in re.finditer(rf"\b({year}(?:0[1-9]|10)\d{{6}})\b", html):
+            rid = m.group(1)
+            if rid not in race_ids:
+                race_ids.append(rid)
+    return race_ids
+
+
+def get_race_ids_for_date(kaisai_date: str) -> list[str]:
+    """
+    当日の全 race_id リストを取得する。
+
+    試行順:
+      1. race_list.html の HTML 全体から抽出
+      2. race_list_sub.html (部分HTML/Ajaxコンテンツ) から抽出
+      3. api_get_race_list.html (JSON API) から抽出
+    """
+    year = kaisai_date[:4]
+    race_ids: list[str] = []
+
+    # --- 試行 1: メインのレース一覧ページ ---
+    url1 = f"{BASE_URL}/top/race_list.html?kaisai_date={kaisai_date}"
+    print(f"レース一覧を取得中: {url1}")
+    html1 = _fetch_html(url1)
+    if html1:
+        print(f"  レスポンス: {len(html1)} 文字")
+        race_ids = _extract_race_ids(html1, year)
+
+    # --- 試行 2: サブHTML (Ajax コンテンツ) ---
+    if not race_ids:
+        url2 = f"{BASE_URL}/top/race_list_sub.html?kaisai_date={kaisai_date}"
+        print(f"  → サブHTMLを試みます: {url2}")
+        html2 = _fetch_html(url2)
+        if html2:
+            print(f"    レスポンス: {len(html2)} 文字")
+            race_ids = _extract_race_ids(html2, year)
+
+    # --- 試行 3: JSON API エンドポイント ---
+    if not race_ids:
+        url3 = f"{BASE_URL}/api/api_get_race_list.html?kaisai_date={kaisai_date}"
+        print(f"  → APIを試みます: {url3}")
+        html3 = _fetch_html(url3)
+        if html3:
+            print(f"    レスポンス: {len(html3)} 文字")
+            race_ids = _extract_race_ids(html3, year)
+
+    # --- デバッグ: 全試行失敗時に HTML 本文部分を出力 ---
+    if not race_ids and html1:
+        # 先頭の HEAD を読み飛ばして BODY 付近 (5000文字目から) を表示
+        mid_start = min(5000, len(html1) // 3)
+        snippet = html1[mid_start:mid_start + 1200].replace("\n", " ").replace("\r", "")
+        print(f"  [DEBUG] HTML 本文付近 ({mid_start} 文字目から 1200 文字):")
         for i in range(0, len(snippet), 120):
             print(f"    {snippet[i:i+120]}")
 
