@@ -22,7 +22,15 @@
       "Bash(pip show *)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(git rm *)",
+      "Bash(git restore *)",
+      "Bash(python -c \"import sys; lines = sys.buffer.read\\(\\).decode\\('cp932'\\); rows = lines.strip\\(\\).split\\('\\\\n'\\); print\\('行数:', len\\(rows\\)\\); print\\('最初の3行:'\\); [print\\(r[:80]\\) for r in rows[:3]]\")",
+      "Bash(git show *)",
+      "Bash(python -c \"import pandas as pd; df=pd.read_csv\\('C:/Temp/check_results.csv',encoding='cp932'\\); print\\('rows:', len\\(df\\)\\); dup=df[df.duplicated\\(subset=['場所','R','馬番'],keep=False\\)]; print\\('dup_rows:', len\\(dup\\)\\)\")",
+      "Bash(mkdir \"C:\\\\Temp\")",
+      "Bash(git pull *)",
+      "Bash(git stash *)"
     ]
   }
 }
