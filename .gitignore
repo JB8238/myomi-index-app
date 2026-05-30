@@ -3,3 +3,8 @@ __pycache__
 *.pyc
 /list
 .ipynb_checkpoints
+# apply_race_changes.py が作成するバックアップ（glob にヒットして行数が2倍になるのを防ぐ）
+*.bak
+*_bak_*.csv
+# 旧形式バックアップ（.bak_HHMMSS.csv）も念のため除外
+preprocessed_data_*.bak_*.csv

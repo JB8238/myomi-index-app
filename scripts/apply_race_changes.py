@@ -61,8 +61,10 @@ def apply_changes(kaisai_date: str, changes: dict) -> dict:
         }
 
     # 更新前にバックアップを作成
-    backup_path = csv_path.with_suffix(
-        f".bak_{datetime.now().strftime('%H%M%S')}.csv"
+    # ※ .bak 拡張子にすることで preprocessed_data_*.csv の glob にヒットしないようにする
+    #   （.bak_HHMMSS.csv にすると load_smartrc_from_preprocessed が拾って行数が2倍になる）
+    backup_path = csv_path.with_name(
+        f"{csv_path.stem}_bak_{datetime.now().strftime('%H%M%S')}.bak"
     )
     shutil.copy2(csv_path, backup_path)
 
