@@ -30,7 +30,8 @@
       "Bash(python -c \"import pandas as pd; df=pd.read_csv\\('C:/Temp/check_results.csv',encoding='cp932'\\); print\\('rows:', len\\(df\\)\\); dup=df[df.duplicated\\(subset=['場所','R','馬番'],keep=False\\)]; print\\('dup_rows:', len\\(dup\\)\\)\")",
       "Bash(mkdir \"C:\\\\Temp\")",
       "Bash(git pull *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(python -c \"import sys; import csv; r=csv.reader\\(sys.stdin\\); print\\(list\\(r\\)[0]\\)\")"
     ]
   }
 }

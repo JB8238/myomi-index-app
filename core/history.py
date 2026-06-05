@@ -98,7 +98,7 @@ def build_prof_history(data_dir_str: str) -> pd.DataFrame:
             continue
 
         # 必要最低限の列に絞る（無い列は落ちないように）
-        keep = [c for c in ["場所", "R", "馬番", "馬名", "総合利益度"] if c in df0.columns]
+        keep = [c for c in ["場所", "R", "馬番", "馬名", "総合利益度", "総合利益度順位"] if c in df0.columns]
         df1 = df0[keep].copy()
         df1["__date"] = int(date_int)
         df1["__mtime"] = float(mtime)

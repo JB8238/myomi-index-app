@@ -414,6 +414,7 @@ current_date = extract_yyyymmdd_from_name(Path(selected_file).name)
 current_mtime = Path(selected_file).stat().st_mtime
 
 _prev_total_map: dict[str, float] = {}
+_prev_total_rank_map: dict[str, float] = {}
 if not history.empty and current_date is not None:
     h = history[history["__file"] != Path(selected_file).name].copy()
     h = h[(h["__date"] < current_date) | ((h["__date"] == current_date) & (h["__mtime"] < current_mtime))]
@@ -427,10 +428,18 @@ if not history.empty and current_date is not None:
             .astype(float)
             .to_dict()
         )
+        if "総合利益度順位" in latest.columns:
+            _prev_total_rank_map = (
+                latest.set_index("馬名")["総合利益度順位"]
+                .dropna()
+                .astype(float)
+                .to_dict()
+            )
 
 if "馬名" in filtered.columns:
     filtered = filtered.copy()
     filtered["前走総合利益度"] = filtered["馬名"].astype(str).map(_prev_total_map)
+    filtered["前走利益度順位"] = filtered["馬名"].astype(str).map(_prev_total_rank_map)
 
 
 # =========================================
@@ -713,6 +722,7 @@ mobile_cols = [
         "馬名",
         "総合利益度",
         "前走総合利益度",
+        "前走利益度順位",
         "利益度上昇値",
         "推定人気",
         "人気ランク",
@@ -751,6 +761,7 @@ else:
         .format({
             "総合利益度": "{:.3f}",
             "前走総合利益度": "{:.3f}",
+            "前走利益度順位": "{:.0f}",
             "利益度上昇値": "{:.3f}",
             "総合利益度順位": "{:.0f}",
             "推定人気": "{:.0f}",
@@ -781,6 +792,7 @@ else:
                 "調教師利益度順位": "{:.0f}",
                 "総合利益度": "{:.3f}",
                 "前走総合利益度": "{:.3f}",
+                "前走利益度順位": "{:.0f}",
                 "利益度上昇値": "{:.3f}",
                 "総合利益度順位": "{:.0f}",
             }, na_rep="—")
