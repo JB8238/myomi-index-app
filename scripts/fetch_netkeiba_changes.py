@@ -334,9 +334,9 @@ def detect_changes(kaisai_date: str, race_infos: list[dict]) -> dict:
         if venue not in venue_track:
             venue_track[venue] = {}
         for surface, cond in info["track_conditions"].items():
-            # 同一 venue の同一面は最初の取得値を優先
-            if surface not in venue_track[venue]:
-                venue_track[venue][surface] = cond
+            # 後のレースほど最新の馬場状態を反映しているため、後の値で上書きする
+            # （1Rが「取得なし」でも10Rで正しく取得できていれば最新値が使われる）
+            venue_track[venue][surface] = cond
         for umaban, jockey in info["jockeys"].items():
             jockey_map[(venue, race_r, int(umaban))] = jockey
 
@@ -355,10 +355,8 @@ def detect_changes(kaisai_date: str, race_infos: list[dict]) -> dict:
         new_cond = venue_track[venue][netkeiba_key]
         new_cond_norm = normalize_condition(new_cond)
 
-        # 良↔稍重 の変化のみ対象
-        if (current_cond_norm == "良" and new_cond_norm == "稍重") or (
-            current_cond_norm == "稍重" and new_cond_norm == "良"
-        ):
+        # 変化があれば全て検出（良↔稍重 だけでなく 重・不良 への変化も対象）
+        if current_cond_norm != new_cond_norm:
             track_changes.append(
                 {
                     "場所": venue,
