@@ -235,15 +235,24 @@ def get_shutuba_info(race_id: str) -> dict | None:
     # .RaceData01 テキスト例:
     #   "09:50発走 / ダ1400m (左)\n/ 天候:晴\n/ 馬場:良"
     #   "10:05発走 / 芝2000m\n/ 天候:曇\n/ 馬場:稍重"
+    # ※ netkeiba は馬場状態を省略形で表示することがある:
+    #   良→"良", 稍重→"稍", 重→"重", 不良→"不"
+    #   省略形が混在しても正しく取得できるよう、長い文字列を先に試みる
+    _COND_ABBR_MAP = {"稍": "稍重", "不": "不良"}
+
     race_data_el = soup.find(class_="RaceData01")
     if race_data_el:
         text = race_data_el.get_text()
-        # 馬場状態: "馬場:良" / "馬場：稍重"
-        cond_m = re.search(r"馬場[：:]\s*(良|稍重|重|不良)", text)
+        # 馬場状態: "馬場:良" / "馬場：稍重" / "馬場:稍" / "馬場:不" 等
+        # 省略形（稍・不）より先に正式名（稍重・不良）を試す
+        cond_m = re.search(r"馬場[：:]\s*(良|稍重|稍|重|不良|不)", text)
         # 馬場面: "ダXXXXm" or "芝XXXXm"
         surf_m = re.search(r"(芝|ダ)\d+m", text)
         if cond_m and surf_m:
-            result["track_conditions"][surf_m.group(1)] = cond_m.group(1)
+            cond_raw = cond_m.group(1)
+            # 省略形を正式名に展開（稍→稍重, 不→不良）
+            cond_full = _COND_ABBR_MAP.get(cond_raw, cond_raw)
+            result["track_conditions"][surf_m.group(1)] = cond_full
 
     # --- 騎手名の取得 ---
     # html.parser は <tbody> を暗黙挿入しないため tbody なしでテーブルを取得する
