@@ -1,7 +1,7 @@
 """
 scripts/merge_smartrc_to_preprocessed.py
 
-smartrc_YYYYMMDD.csv の「推定人気」「人気ランク」を
+smartrc_YYYYMMDD.csv の評価順位タブデータを
 preprocessed_data_YYYYMMDD.csv に結合して上書き保存する。
 
 Usage:
@@ -12,6 +12,12 @@ Usage:
     2: 期間指定（data/smartrc/ にある全CSVを対象に自動スキャン）
 
 結合キー: 場所, R, 馬番
+
+マージ対象列:
+    推定人気, 人気ランク,
+    テン1F_過去, テン1F_過去_ランク, テン1F_前走, テン1F_前走_ランク,
+    テン_T, テン_T_ランク, 上がり_T, 上がり_T_ランク,
+    前走_評価, 前々走_評価, 3走前_評価, 4走前_評価, 5走前_評価
 """
 
 import sys
@@ -60,16 +66,27 @@ def merge_one(kaisai_date: str) -> str:
         if "馬番" in df.columns:
             df["馬番"] = pd.to_numeric(df["馬番"], errors="coerce")
 
-    if "推定人気" in df_smartrc.columns:
-        df_smartrc["推定人気"] = pd.to_numeric(df_smartrc["推定人気"], errors="coerce")
+    # --- 数値型変換 ---
+    for col in ["推定人気",
+                "テン1F_過去", "テン1F_過去_ランク",
+                "テン1F_前走", "テン1F_前走_ランク",
+                "テン_T", "テン_T_ランク",
+                "上がり_T", "上がり_T_ランク"]:
+        if col in df_smartrc.columns:
+            df_smartrc[col] = pd.to_numeric(df_smartrc[col], errors="coerce")
 
     # --- 既存列を一旦削除してから結合（重複防止） ---
-    for col in ["推定人気", "人気ランク"]:
-        if col in df_prep.columns:
-            df_prep = df_prep.drop(columns=[col])
+    SMARTRC_COLS = [
+        "推定人気", "人気ランク",
+        "テン1F_過去", "テン1F_過去_ランク",
+        "テン1F_前走", "テン1F_前走_ランク",
+        "テン_T", "テン_T_ランク",
+        "上がり_T", "上がり_T_ランク",
+        "前走_評価", "前々走_評価", "3走前_評価", "4走前_評価", "5走前_評価",
+    ]
+    df_prep = df_prep.drop(columns=[c for c in SMARTRC_COLS if c in df_prep.columns])
 
-    merge_cols = ["場所", "R", "馬番", "推定人気", "人気ランク"]
-    src = df_smartrc[[c for c in merge_cols if c in df_smartrc.columns]].copy()
+    src = df_smartrc[["場所", "R", "馬番"] + [c for c in SMARTRC_COLS if c in df_smartrc.columns]].copy()
 
     df_merged = df_prep.merge(src, on=["場所", "R", "馬番"], how="left")
 
@@ -77,7 +94,8 @@ def merge_one(kaisai_date: str) -> str:
     df_merged.to_csv(prep_path, index=False, encoding="utf-8")
 
     n_matched = df_merged["推定人気"].notna().sum() if "推定人気" in df_merged.columns else 0
-    return f"  ✓ {prep_path.name}  ({n_matched} 頭に推定人気を付与)"
+    n_eval    = df_merged["前走_評価"].notna().sum() if "前走_評価" in df_merged.columns else 0
+    return f"  ✓ {prep_path.name}  ({n_matched} 頭に推定人気 / {n_eval} 頭に前走評価を付与)"
 
 
 def available_smartrc_dates() -> list[str]:
