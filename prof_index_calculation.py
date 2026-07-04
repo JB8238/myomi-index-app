@@ -317,8 +317,30 @@ export("M5", f"work_for_mark5_{kaisai_date}.csv")
 export("M6", f"work_for_mark6_{kaisai_date}.csv")
 export("M7", f"work_for_mark7_{kaisai_date}.csv")
 
+# ── 馬印1：前走_評価 / 馬印2：前々走_評価 ──────────────────────────
+eval_src_cols = [c for c in ["前走_評価", "前々走_評価"] if c in base_df_prof_preprocessed.columns]
+if eval_src_cols:
+    df_eval = base_df_prof_preprocessed[["場所", "R", "馬番"] + eval_src_cols].copy()
+    df_eval["R"]   = pd.to_numeric(df_eval["R"],   errors="coerce")
+    df_eval["馬番"] = pd.to_numeric(df_eval["馬番"], errors="coerce")
+    df["R"]   = pd.to_numeric(df["R"],   errors="coerce")
+    df["馬番"] = pd.to_numeric(df["馬番"], errors="coerce")
+    df = df.merge(df_eval, on=["場所", "R", "馬番"], how="left")
+
+    if "前走_評価" in df.columns:
+        df["M1"] = df["前走_評価"].fillna("")
+        export("M1", f"work_for_mark1_{kaisai_date}.csv")
+
+    if "前々走_評価" in df.columns:
+        df["M2"] = df["前々走_評価"].fillna("")
+        export("M2", f"work_for_mark2_{kaisai_date}.csv")
+else:
+    print("⚠ 前走_評価 / 前々走_評価 が preprocessed_data に存在しません。merge_smartrc_to_preprocessed.py を先に実行してください。")
+
 # 検算用（任意）
-df[["場所","R","馬番","馬名","総合利益度","M4","M5","M6","M7"]].to_csv(
+check_cols = ["場所", "R", "馬番", "馬名", "総合利益度",
+              "M1", "M2", "M4", "M5", "M6", "M7"]
+df[[c for c in check_cols if c in df.columns]].to_csv(
     os.path.join(OUT_DIR, "computed_marks_check.csv"),
     index=False, encoding="utf-8-sig"
 )

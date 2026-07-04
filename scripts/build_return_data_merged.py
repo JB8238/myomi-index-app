@@ -19,6 +19,12 @@ USE_COLS = [
     "馬連配当",
 ]
 
+# smartrc からマージする列（キー列を除く）
+SMARTRC_MERGE_COLS = [
+    "推定人気", "人気ランク",
+    "前走_評価", "前々走_評価", "3走前_評価", "4走前_評価", "5走前_評価",
+]
+
 def extract_yyyymmdd(name: str):
     m = re.findall(r"(\d{8})", name)
     for s in reversed(m):
@@ -81,8 +87,10 @@ if not rows:
 
 merged = pd.concat(rows, ignore_index=True)
 
-# ---- smartrc 推定人気・人気ランク のマージ ----
+# ---- smartrc データのマージ ----
 SMARTRC_DIR = Path("./data/smartrc")
+KEY_COLS = ["開催日", "場所", "R", "馬番"]
+
 smartrc_rows = []
 for csv_path in sorted(SMARTRC_DIR.glob("smartrc_*.csv")):
     d = extract_yyyymmdd(csv_path.name)
@@ -92,20 +100,25 @@ for csv_path in sorted(SMARTRC_DIR.glob("smartrc_*.csv")):
     df_s["開催日"] = d
     df_s["R"] = pd.to_numeric(df_s["R"], errors="coerce")
     df_s["馬番"] = pd.to_numeric(df_s["馬番"], errors="coerce")
-    df_s["推定人気"] = pd.to_numeric(df_s["推定人気"], errors="coerce")
-    smartrc_rows.append(df_s[["開催日", "場所", "R", "馬番", "推定人気", "人気ランク"]])
+    if "推定人気" in df_s.columns:
+        df_s["推定人気"] = pd.to_numeric(df_s["推定人気"], errors="coerce")
+
+    src_cols = KEY_COLS + [c for c in SMARTRC_MERGE_COLS if c in df_s.columns]
+    smartrc_rows.append(df_s[src_cols])
 
 if smartrc_rows:
     df_smartrc_all = pd.concat(smartrc_rows, ignore_index=True)
-    df_smartrc_all["場所"] = df_smartrc_all["場所"].astype(str).str.replace("\u3000", " ").str.strip()
-    merged["場所"] = merged["場所"].astype(str).str.replace("\u3000", " ").str.strip()
+    df_smartrc_all["場所"] = df_smartrc_all["場所"].astype(str).str.replace("　", " ").str.strip()
+    merged["場所"] = merged["場所"].astype(str).str.replace("　", " ").str.strip()
+
     # 既存列を上書きしないよう drop してから merge
-    for col in ["推定人気", "人気ランク"]:
-        if col in merged.columns:
-            merged = merged.drop(columns=[col])
+    drop_cols = [c for c in SMARTRC_MERGE_COLS if c in merged.columns]
+    if drop_cols:
+        merged = merged.drop(columns=drop_cols)
+
     merged = merged.merge(
         df_smartrc_all,
-        on=["開催日", "場所", "R", "馬番"],
+        on=KEY_COLS,
         how="left",
     )
     print(f"smartrc files merged: {len(smartrc_rows)} 日分")
