@@ -317,25 +317,31 @@ export("M5", f"work_for_mark5_{kaisai_date}.csv")
 export("M6", f"work_for_mark6_{kaisai_date}.csv")
 export("M7", f"work_for_mark7_{kaisai_date}.csv")
 
-# ── 馬印1：前走_評価 / 馬印2：前々走_評価 ──────────────────────────
-eval_src_cols = [c for c in ["前走_評価", "前々走_評価"] if c in base_df_prof_preprocessed.columns]
-if eval_src_cols:
-    df_eval = base_df_prof_preprocessed[["場所", "R", "馬番"] + eval_src_cols].copy()
-    df_eval["R"]   = pd.to_numeric(df_eval["R"],   errors="coerce")
-    df_eval["馬番"] = pd.to_numeric(df_eval["馬番"], errors="coerce")
+# ── 馬印1：人気ランク / 馬印2：前走_評価 ───────────────────────────
+# A〜E → Ａ〜Ｅ 全角変換テーブル
+TO_FULLWIDTH = str.maketrans("ABCDE", "ＡＢＣＤＥ")
+
+m1m2_src_cols = [c for c in ["人気ランク", "前走_評価"] if c in base_df_prof_preprocessed.columns]
+if m1m2_src_cols:
+    df_m1m2 = base_df_prof_preprocessed[["場所", "R", "馬番"] + m1m2_src_cols].copy()
+    df_m1m2["R"]   = pd.to_numeric(df_m1m2["R"],   errors="coerce")
+    df_m1m2["馬番"] = pd.to_numeric(df_m1m2["馬番"], errors="coerce")
     df["R"]   = pd.to_numeric(df["R"],   errors="coerce")
     df["馬番"] = pd.to_numeric(df["馬番"], errors="coerce")
-    df = df.merge(df_eval, on=["場所", "R", "馬番"], how="left")
+    df = df.merge(df_m1m2, on=["場所", "R", "馬番"], how="left")
 
-    if "前走_評価" in df.columns:
-        df["M1"] = df["前走_評価"].fillna("")
+    def to_fw(col):
+        return df[col].fillna("").astype(str).str.translate(TO_FULLWIDTH)
+
+    if "人気ランク" in df.columns:
+        df["M1"] = to_fw("人気ランク")
         export("M1", f"work_for_mark1_{kaisai_date}.csv")
 
-    if "前々走_評価" in df.columns:
-        df["M2"] = df["前々走_評価"].fillna("")
+    if "前走_評価" in df.columns:
+        df["M2"] = to_fw("前走_評価")
         export("M2", f"work_for_mark2_{kaisai_date}.csv")
 else:
-    print("⚠ 前走_評価 / 前々走_評価 が preprocessed_data に存在しません。merge_smartrc_to_preprocessed.py を先に実行してください。")
+    print("⚠ 人気ランク / 前走_評価 が preprocessed_data に存在しません。merge_smartrc_to_preprocessed.py を先に実行してください。")
 
 # 検算用（任意）
 check_cols = ["場所", "R", "馬番", "馬名", "総合利益度",
