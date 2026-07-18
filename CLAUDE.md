@@ -37,7 +37,17 @@ python prof_index_calculation.py
 #         data/YYYY/YYYYMMDD/preprocessed_data_YYYYMMDD.csv
 # Output: prof_result/YYYY/results_prof_index_YYYYMMDD.csv
 #         index/YYYYMMDD/{jockey,sire,trainer}_index_YYYYMMDD.csv
+#         C:/TFJV/target_marks_out/YYYY/YYYYMMDD/work_for_mark{1,2,4,5,6,7}_YYYYMMDD.csv (TARGET馬印取込用)
+#         C:/TFJV/EX_DATA/妙味度指数/myomido_index_YYYYMMDD.csv (TARGET外部指数取込用、総合利益度)
 ```
+
+### TARGET frontier JV Integration
+
+`prof_index_calculation.py` writes two kinds of files consumed by TARGET frontier JV, both under `C:/TFJV/` (outside this repo, on the machine running TARGET):
+
+- **馬印 (marks)**: `C:/TFJV/target_marks_out/YYYY/YYYYMMDD/work_for_markN_YYYYMMDD.csv` — headerless `馬名,ワークデータ` CSVs imported as TARGET's 馬印 1/2/4/5/6/7.
+- **外部指数 (external index)**: `C:/TFJV/EX_DATA/妙味度指数/myomido_index_YYYYMMDD.csv` — headerless `レースID,指数` CSV (cp932), one row per horse with a non-NaN `総合利益度`. The race ID is TARGET's "第3仕様" 14-digit import format (`YYYY+MM+DD+場所コード2桁+R2桁+馬番2桁`, no 回/日次needed) built via the `PLACE_CODE` map in `prof_index_calculation.py` (JRA 10 tracks only; unmapped 場所 values are skipped with a warning).
+  - One-time setup required inside TARGET (環境設定 → 外部指数の設定 → 新規追加): ファイル形式「馬単位・CSV形式」, パス・ファイル名 `C:\TFJV\EX_DATA\妙味度指数\myomido_index_%Y3%M1%D1.csv`, レースID「第3仕様(12/14桁)」, 指数順位判定「大きい方が優位」. After that one-time registration, TARGET auto-loads whatever file this script produces for the matching date.
 
 **Step 3 — Build merged return data** (one-time / periodic refresh):
 ```bash

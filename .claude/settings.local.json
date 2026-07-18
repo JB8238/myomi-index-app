@@ -35,7 +35,11 @@
       "PowerShell(python -c \"import pandas as pd; df = pd.read_csv\\('data/smartrc/smartrc_20260627.csv', encoding='utf-8-sig', nrows=3\\); print\\(df.columns.tolist\\(\\)\\); print\\(df.head\\(3\\).to_string\\(\\)\\)\")",
       "PowerShell(python -c \"import ast, sys; ast.parse\\(open\\('scripts/fetch_smartrc.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
       "PowerShell(python -c \"import ast; ast.parse\\(open\\('scripts/fetch_smartrc.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
-      "PowerShell(python -c \"import ast; ast.parse\\(open\\('scripts/merge_smartrc_to_preprocessed.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")"
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('scripts/merge_smartrc_to_preprocessed.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python prof_index_calculation.py 20241005)",
+      "Bash(PYTHONIOENCODING=utf-8 python prof_index_calculation.py 20241005)",
+      "Read(//c/TFJV/EX_DATA/妙味度指数//**)",
+      "Bash(iconv -f cp932 -t utf-8 \"/c/TFJV/EX_DATA/妙味度指数/myomido_index_20241005.csv\")"
     ]
   }
 }

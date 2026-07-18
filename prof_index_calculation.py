@@ -20,6 +20,15 @@ OUT_DIR = "C:/TFJV/target_marks_out"
 TARGET_DIR = Path(OUT_DIR , year, kaisai_date)
 marks_top5 = ["◎", "○", "▲", "△", "★"]
 
+# TARGET frontier JV「外部指数」登録用の出力先（馬単位・CSV形式、レースID第3仕様 14桁）
+EXTERNAL_INDEX_DIR = Path("C:/TFJV/EX_DATA/妙味度指数")
+
+# JRA場所コード（外部指数のレースIDに使用）
+PLACE_CODE = {
+    "札幌": "01", "函館": "02", "福島": "03", "新潟": "04", "東京": "05",
+    "中山": "06", "中京": "07", "京都": "08", "阪神": "09", "小倉": "10",
+}
+
 def all_nan_np(lst):
     """
     NumPy を使って全要素が NaN か判定
@@ -349,4 +358,37 @@ check_cols = ["場所", "R", "馬番", "馬名", "総合利益度",
 df[[c for c in check_cols if c in df.columns]].to_csv(
     os.path.join(OUT_DIR, "computed_marks_check.csv"),
     index=False, encoding="utf-8-sig"
+)
+
+# ── TARGET frontier JV「外部指数」登録用ファイル（総合利益度） ──────────
+# 馬単位・CSV形式「レースID,指数」、レースIDは第3仕様（回・日次不要の14桁：
+# 年4桁+月2桁+日2桁+場所コード2桁+R2桁+馬番2桁）。
+# TARGET側の環境設定＞外部指数の設定で、このフォルダ内のファイルを
+# パス例 C:\TFJV\EX_DATA\妙味度指数\myomido_index_%Y3%M1%D1.csv、
+# ファイル形式「馬単位・CSV形式」、レースID「第3仕様(12/14桁)」、
+# 指数順位判定「大きい方が優位」として一度だけ登録すれば、以後は
+# このファイルを置くだけで自動的に読み込まれる。
+EXTERNAL_INDEX_DIR.mkdir(parents=True, exist_ok=True)
+
+ext_rows = []
+unmapped_places = set()
+for _, row in df.iterrows():
+    if pd.isna(row["総合利益度"]):
+        continue
+
+    place_code = PLACE_CODE.get(row["場所"])
+    if place_code is None:
+        unmapped_places.add(row["場所"])
+        continue
+
+    race_id = f"{kaisai_date}{place_code}{int(row['R']):02d}{int(row['馬番']):02d}"
+    ext_rows.append([race_id, round(float(row["総合利益度"]), 2)])
+
+if unmapped_places:
+    print(f"⚠ 場所コード未対応のためスキップ: {sorted(unmapped_places)}")
+
+ext_df = pd.DataFrame(ext_rows, columns=["レースID", "指数"])
+ext_df.to_csv(
+    EXTERNAL_INDEX_DIR / f"myomido_index_{kaisai_date}.csv",
+    index=False, header=False, encoding="cp932",
 )
