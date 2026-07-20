@@ -1,0 +1,5 @@
+﻿bet_type,レースレベル,件数,ROI,CI_low,CI_high,p_value,多重検定OK,期間安定OK,採用,feat1_name,feat1_type,feat1_value,feat1_low,feat1_high,feat1_include_lowest,feat2_name,feat2_type,feat2_value,feat2_low,feat2_high,feat2_include_lowest
+単勝,Lv4,235,159.70212765957447,111.40226099945683,206.54998367139595,0.1384861513848615,False,True,True,人気乖離,continuous,人気乖離_2,1.0,6.0,False,cv,continuous,cv_2,0.6378466193761243,0.8129603722529037,False
+複勝,Lv5,38,127.89473684210526,109.70588235294119,145.13513513513513,0.09559044095590441,False,True,True,人気乖離,continuous,人気乖離_1,-inf,1.0,True,偏差値合格数区分,categorical,2/3+,,,
+複勝,nan,38,196.05263157894737,116.33847685415628,282.3076923076923,0.1466853314668533,False,True,True,人気乖離,continuous,人気乖離_3,5.0,inf,False,偏差値合格数区分,categorical,2/3+,,,
+複勝,nan,72,168.88888888888889,128.0455817672931,210.0,0.05039496050394961,False,True,True,合格数区分,categorical,3/3（万全）,,,,偏差値合格数区分,categorical,2/3+,,,

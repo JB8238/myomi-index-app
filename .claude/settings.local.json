@@ -39,7 +39,8 @@
       "Bash(python prof_index_calculation.py 20241005)",
       "Bash(PYTHONIOENCODING=utf-8 python prof_index_calculation.py 20241005)",
       "Read(//c/TFJV/EX_DATA/妙味度指数//**)",
-      "Bash(iconv -f cp932 -t utf-8 \"/c/TFJV/EX_DATA/妙味度指数/myomido_index_20241005.csv\")"
+      "Bash(iconv -f cp932 -t utf-8 \"/c/TFJV/EX_DATA/妙味度指数/myomido_index_20241005.csv\")",
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)"
     ]
   }
 }

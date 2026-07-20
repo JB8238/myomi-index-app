@@ -3,119 +3,44 @@ from __future__ import annotations
 
 from pathlib import Path
 import pandas as pd
-import numpy as np
 import streamlit as st
+
+from core.strategy_engine import judge
 
 
 @st.cache_data(show_spinner=False)
-def load_buy_conditions(path_str: str, file_mtime: float | None = None) -> pd.DataFrame:
-    """analysisが出力した buy_conditions_full_*.csv を読み込む（統一ローダ）"""
+def load_buy_conditions(path_str: str, file_mtime: float | None = None, bet_type: str | None = None) -> pd.DataFrame:
+    """core.strategy_engine.discover_rules が出力したルールCSVを読み込む（統一ローダ）
+
+    bet_type: 指定すると "bet_type" 列でその券種の行だけに絞り込む（例: "単勝"）
+    """
     p = Path(path_str)
     if not p.exists():
         return pd.DataFrame()
 
-    dfc = pd.read_csv(p, encoding="utf-8-sig")
+    try:
+        dfc = pd.read_csv(p, encoding="utf-8-sig")
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
     dfc.columns = [str(c).strip() for c in dfc.columns]
 
-    for c in ["up_low", "up_high", "gap_low", "gap_high", "件数", "単勝ROI", "複勝ROI"]:
+    for c in ["件数", "ROI", "CI_low", "CI_high", "p_value",
+              "feat1_low", "feat1_high", "feat2_low", "feat2_high"]:
         if c in dfc.columns:
             dfc[c] = pd.to_numeric(dfc[c], errors="coerce")
 
-    for c in ["up_include_lowest", "gap_include_lowest"]:
+    for c in ["採用", "多重検定OK", "期間安定OK"]:
         if c in dfc.columns:
             dfc[c] = dfc[c].astype(bool)
 
-    # ---- 前提条件列（analysisが付与）を数値化しておく ----
-    for c in ["前提_cv閾値", "前提_混戦度上位率"]:
-        if c in dfc.columns:
-            dfc[c] = pd.to_numeric(dfc[c], errors="coerce")
+    # 自動化スクリプトは「採用」された行のみ書き出す想定だが、念のためここでも絞る
+    if "採用" in dfc.columns:
+        dfc = dfc[dfc["採用"]]
 
-    return dfc
+    if bet_type is not None and "bet_type" in dfc.columns:
+        dfc = dfc[dfc["bet_type"] == bet_type]
 
-
-def in_interval(val: float, low: float, high: float, include_lowest: bool) -> bool:
-    if pd.isna(val) or pd.isna(low) or pd.isna(high):
-        return False
-    if include_lowest:
-        return (val >= low) and (val <= high)
-    return (val > low) and (val <= high)
-
-def check_prereq(row: pd.Series, cond_df_lv: pd.DataFrame) -> tuple[bool, str]:
-    """
-    条件CSVに書かれた「前提条件（cv & 合格数）」を満たすかを判定する。
-    戻り値: (OKか, 理由)
-    """
-    if cond_df_lv is None or cond_df_lv.empty:
-        return True, ""
-
-    r0 = cond_df_lv.iloc[0]
-
-    # ---- 合格数前提（例: 3/3（万全）） ----
-    prereq_comp = str(r0.get("前提_合格数区分", "")).strip()
-    if prereq_comp and prereq_comp != "ALL":
-        # row側は「コンポーネント合格数」か「合格数区分」どちらかがあればOKにする
-        comp_ok = True
-        if "コンポーネント合格数" in row:
-            comp_ok = (pd.to_numeric(row.get("コンポーネント合格数"), errors="coerce") == 3) if prereq_comp.startswith("3/3") else True
-        elif "合格数区分" in row:
-            comp_ok = (str(row.get("合格数区分")) == prereq_comp)
-        else:
-            comp_ok = False
-        if not comp_ok:
-            return False, f"前提未達: 合格数={prereq_comp}"
-
-    # ---- cv閾値前提 ----
-    cv_th = r0.get("前提_cv閾値", np.nan)
-    if pd.notna(cv_th):
-        cv_val = row.get("cv", np.nan)
-        if pd.isna(cv_val):
-            return False, "前提未達: cvが未計算"
-        if float(cv_val) < float(cv_th):
-            return False, f"前提未達: cv<{float(cv_th):.3f}"
-
-    return True, ""
-
-
-def judge_row(val_up, val_gap, cond_df_lv: pd.DataFrame):
-    """
-    index_view と同一の判定ルール（ここが唯一の正）
-    戻り値: (status, reason)
-      status: "✅" / "△" / ""
-    """
-    if cond_df_lv is None or cond_df_lv.empty or pd.isna(val_up):
-        return "", ""
-
-    cand = cond_df_lv[
-        cond_df_lv.apply(
-            lambda r: in_interval(val_up, r["up_low"], r["up_high"], r["up_include_lowest"]),
-            axis=1
-        )
-    ]
-    if cand.empty:
-        return "", ""
-
-    # 人気乖離が無い（事前）なら △（条件付き）
-    if pd.isna(val_gap):
-        gaps = " / ".join(cand["人気乖離区分"].astype(str).unique().tolist())
-        return "△", f"人気乖離が {gaps} なら買い"
-
-    ok = cand[
-        cand.apply(
-            lambda r: in_interval(val_gap, r["gap_low"], r["gap_high"], r["gap_include_lowest"]),
-            axis=1
-        )
-    ]
-    if ok.empty:
-        gaps = " / ".join(cand["人気乖離区分"].astype(str).unique().tolist())
-        return "", f"人気乖離が {gaps} なら買い（現在は不一致）"
-
-    # best row（説明用）
-    best = ok.copy()
-    roi_col = "単勝ROI" if "単勝ROI" in ok.columns else ("複勝ROI" if "複勝ROI" in ok.columns else None)
-    if roi_col:
-        best = best.sort_values(roi_col, ascending=False)
-    r0 = best.iloc[0]
-    return "✅", f"{r0['上昇値区分']} & {r0['人気乖離区分']} (件数={int(r0['件数'])})"
+    return dfc.reset_index(drop=True)
 
 
 def apply_buy_conditions(
@@ -123,45 +48,45 @@ def apply_buy_conditions(
     race_level: str,
     cond_win: pd.DataFrame,
     cond_plc: pd.DataFrame,
-    pop_col: str = "人気乖離",
-    suffix: str = "",
 ) -> pd.DataFrame:
-    """df（馬単位）に 単勝/複勝 の条件判定列を付与する（index_view/home共通）
+    """df（馬単位）に 単勝/複勝 の条件判定列（単勝_条件/単勝_条件説明/複勝_条件/複勝_条件説明）を付与する
+    （index_view/home/recommendations共通）。
 
-    pop_col: 人気乖離として使う列名（"人気乖離" or "推定人気乖離"）
-    suffix:  出力列名のサフィックス（"" → 単勝_条件, "_推定" → 単勝_条件_推定）
+    判定は core.strategy_engine.judge に委譲する（ルールは複数の候補特徴量
+    [利益度上昇値, 人気乖離, cv, 合格数区分, 偏差値合格数区分] のうち1〜2個の組み合わせで
+    表現されるため、馬ごとにこれらの生の値を渡す）。
+
+    「人気乖離」は常に推定人気（レース前に分かる）ベースの値を指す。確定人気・単オッズ・
+    複勝オッズはレース結果ファイル由来でレース後にしか確定しないため、判定には使わない。
     """
     out = df.copy()
-    win_key = f"単勝_条件{suffix}"
-    win_exp = f"単勝_条件説明{suffix}"
-    plc_key = f"複勝_条件{suffix}"
-    plc_exp = f"複勝_条件説明{suffix}"
 
     if not race_level:
-        out[win_key] = ""
-        out[win_exp] = ""
-        out[plc_key] = ""
-        out[plc_exp] = ""
+        out["単勝_条件"] = ""
+        out["単勝_条件説明"] = ""
+        out["複勝_条件"] = ""
+        out["複勝_条件説明"] = ""
         return out
 
-    cw = cond_win[cond_win["レースレベル"] == race_level] if not cond_win.empty else pd.DataFrame()
-    cp = cond_plc[cond_plc["レースレベル"] == race_level] if not cond_plc.empty else pd.DataFrame()
+    cw = cond_win[cond_win["レースレベル"].astype(str) == str(race_level)] if not cond_win.empty else pd.DataFrame()
+    cp = cond_plc[cond_plc["レースレベル"].astype(str) == str(race_level)] if not cond_plc.empty else pd.DataFrame()
 
-    res_w = out.apply(
-        lambda r: ("", check_prereq(r, cw)[1]) if not check_prereq(r, cw)[0]
-        else judge_row(r.get("利益度上昇値"), r.get(pop_col), cw),
-        axis=1
-    )
-    out[win_key] = res_w.apply(lambda t: t[0])
-    out[win_exp] = res_w.apply(lambda t: t[1])
+    def _feature_values(row: pd.Series) -> dict:
+        return {
+            "利益度上昇値": row.get("利益度上昇値"),
+            "人気乖離": row.get("推定人気乖離"),
+            "cv": row.get("cv"),
+            "合格数区分": row.get("合格数区分"),
+            "偏差値合格数区分": row.get("偏差値合格数区分"),
+        }
 
-    res_p = out.apply(
-        lambda r: ("", check_prereq(r, cp)[1]) if not check_prereq(r, cp)[0]
-        else judge_row(r.get("利益度上昇値"), r.get(pop_col), cp),
-        axis=1
-    )
-    out[plc_key] = res_p.apply(lambda t: t[0])
-    out[plc_exp] = res_p.apply(lambda t: t[1])
+    res_w = out.apply(lambda r: judge(_feature_values(r), cw), axis=1)
+    out["単勝_条件"] = res_w.apply(lambda t: t[0])
+    out["単勝_条件説明"] = res_w.apply(lambda t: t[1])
+
+    res_p = out.apply(lambda r: judge(_feature_values(r), cp), axis=1)
+    out["複勝_条件"] = res_p.apply(lambda t: t[0])
+    out["複勝_条件説明"] = res_p.apply(lambda t: t[1])
 
     return out
 
