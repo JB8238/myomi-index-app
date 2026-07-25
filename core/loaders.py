@@ -35,7 +35,7 @@ def load_preprocessed(data_dir: Path) -> pd.DataFrame:
             continue
 
         keep_cols = ["場所", "R", "馬番", "レースレベル"]
-        for opt in ["推定人気", "人気ランク"]:
+        for opt in ["推定人気", "人気ランク", "脚質傾向", "コース複勝率", "距離帯複勝率"]:
             if opt in df0.columns:
                 keep_cols.append(opt)
         tmp = df0[keep_cols].copy()
@@ -49,6 +49,9 @@ def load_preprocessed(data_dir: Path) -> pd.DataFrame:
         tmp["馬番"] = pd.to_numeric(tmp["馬番"], errors="coerce")
         if "推定人気" in tmp.columns:
             tmp["推定人気"] = pd.to_numeric(tmp["推定人気"], errors="coerce")
+        for c in ["コース複勝率", "距離帯複勝率"]:
+            if c in tmp.columns:
+                tmp[c] = pd.to_numeric(tmp[c], errors="coerce")
 
         rows.append(tmp)
 

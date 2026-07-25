@@ -18,6 +18,7 @@ import pandas as pd
 
 CANDIDATE_FEATURE_COLS = [
     "利益度上昇値", "人気乖離", "cv", "合格数区分", "偏差値合格数区分",
+    "脚質傾向", "コース複勝率", "距離帯複勝率",
 ]
 
 

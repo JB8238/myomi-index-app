@@ -67,7 +67,7 @@ DATA_DIR = REPO_ROOT / "prof_result"
 PREP_DIR = REPO_ROOT / "data"
 MERGED_RETURN_PATH = PREP_DIR / "return_data_merged.csv"
 
-CATEGORICAL_FEATURES = {"合格数区分", "偏差値合格数区分"}
+CATEGORICAL_FEATURES = {"合格数区分", "偏差値合格数区分", "脚質傾向"}
 
 
 def extract_yyyymmdd_from_name(filename: str) -> int | None:
