@@ -26,8 +26,12 @@ All scripts are run manually with Python — they are **not** part of the Stream
 ```bash
 cd ../妙味度指数_jvlink
 .venv\Scripts\python.exe fetch_race_data.py --sid UNKNOWN --from <YYYYMMDD>000000 --option 2
-# Output: 妙味度指数_jvlink/data_out/{ra,se}.csv (this repo's preprocessing.py reads these)
+.venv\Scripts\python.exe fetch_race_data.py --sid UNKNOWN --dataspec SNPN --from <YYYYMMDD>000000 --option 2
+.venv\Scripts\python.exe fetch_weather.py --sid UNKNOWN --date <YYYYMMDD>
+# Output: 妙味度指数_jvlink/data_out/{ra,se,ck,we}.csv (this repo's preprocessing.py reads these)
 ```
+`option=1`/`2` are incremental — re-running with a date range already consumed this session returns `JVOpen failed with code -1`. Use `--option 4` with an earlier `--from` (e.g. start of the month) instead if that happens; it always returns the full current state and isn't affected by prior incremental consumption.
+
 Also keep `data_out/horse_race_history.csv` reasonably fresh (used for 前走間隔/前走距離 — see below):
 ```bash
 .venv\Scripts\python.exe build_horse_history.py --sid UNKNOWN   # incremental, resumes from history_state.json
@@ -77,6 +81,16 @@ python prof_index_calculation.py
 **Known JV-Link gotchas** (see `妙味度指数_jvlink/jvlink_client.py` docstrings for the fixes): `JVOpen` needs all 6 positional args (the last 3 are `[out]` params — pass `0, 0, ""` as placeholders) and returns a 4-tuple. `JVRead` returns `(return_code, buff, size, filename)` — **`return_code == -1` means "this file ended, keep reading" (not EOF!), and `0` means true EOF** (the interface spec has this exact wording; a client that treats -1 as terminal will silently only ever see the first file's records — this was the root cause of an earlier "only JG/H1 records come back" scare, not an sid restriction). `buff` is already cp932-decoded by JV-Link's COM layer, not a raw 1-byte-per-char string — re-encode with `.encode("cp932")` to get the original bytes. Always call `client.wait_for_download(result.download_count)` before reading (per spec, reading before download completion "may cause unexpected errors").
 
 **Validation**: `preprocessing.py`'s JV-Link-sourced output was diffed field-by-field against a known-good TARGET-only `preprocessed_data_20260718.csv` (468 horses) — クラス/種別/距離/レースレベル/年齢/騎手名/調教師名/距離区分/回り/道悪判定/種牡馬名 all matched 100%; 臨戦過程/距離変遷 matched 99.4%/99.6% (the few misses are the 2023-01-01 backfill-window edge case above, not a logic bug).
+
+### WE (天候馬場状態) — live track condition before results are confirmed
+
+RA's 芝馬場状態コード/ダート馬場状態コード are **only populated once a race is confirmed** — for a same-day, not-yet-run race (データ区分="2", 出馬表 stage) both are always `"0"`, even minutes before post time. This is not a bug in `fetch_race_data.py`; JV-Data genuinely withholds this field until results are in. Getting the *live* pre-race track condition needs an entirely different call:
+
+- **`妙味度指数_jvlink/fetch_weather.py --sid UNKNOWN --date YYYYMMDD`** calls `JVLinkClient.open_realtime("0B14", "YYYYMMDD")` — **`JVRTOpen`** (real-time open), not `JVOpen`. Confirmed empirically: dataspec must be `"0B14"` (速報開催情報・一括, digit zero not letter O) with an 8-digit 開催日単位 key; `"0B16"`(指定) accepts the same dataspec string but returns `-114` (invalid key) for a date-only key — it needs a key sourced from an actual `JVWatchEvent` push notification, not implemented here. `JVOpen` itself rejects all `0Bxx`/`OBxx` variants outright with `-111` (invalid dataspec) — these codes are JVRTOpen-only.
+- Output: `data_out/we.csv`, one row **per venue per meeting day** (競馬場コード+開催回+開催日目 — WE has no レース番号; track condition applies venue-wide, not per-race).
+- **Parsing gotcha**: a single WE record only ever contains *either* the new weather value *or* the new track-condition value, never both (`変更識別`: 1=initial/both, 2=weather-only, 3=track-condition-only; whichever field isn't part of that update stays at its `"0"` default). Naively keeping "the most recent record per venue" can therefore silently lose the last known track condition if the latest update happened to be weather-only. `fetch_weather.py` instead walks all of a venue's records in `発表月日時分` order and tracks the last non-`"0"` value seen for 天候/芝/ダート independently.
+- `preprocessing.py` merges `we.csv` on venue key (not full race key) and prefers RA's confirmed code when present, falling back to WE's live value otherwise (see `_classify_baba_jotai`). **Must select turf vs. dirt by the race's own 種別** — RA only ever has one of the two codes populated (the other is always `"0"`) so "whichever is non-zero" naturally picks correctly, but WE reports both codes simultaneously (a venue usually has both a turf and dirt course), so blindly preferring "non-zero" there picks the turf value even for a dirt race. This was caught during today's (2026-07-26) first live run — 新潟's dirt races were showing 稍重 (turf's condition) instead of 重 (dirt's actual condition) until fixed.
+- Only tested for `option=2`-equivalent same-day use so far (today's card); not yet validated for retroactively backfilling historical WE data (unlikely to be needed since RA already has confirmed track condition for any race that's actually finished).
 
 ### CK (出走別着度数) — running-style tendency and course/distance aptitude
 

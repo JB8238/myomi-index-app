@@ -14,6 +14,7 @@ PLACE_CODE_TO_NAME = {
 }
 
 RACE_KEY = ["開催年", "開催月日", "競馬場コード", "開催回", "開催日目", "レース番号"]
+VENUE_KEY = ["開催年", "開催月日", "競馬場コード", "開催回", "開催日目"]  # WE(天候馬場状態)は開催場単位
 
 GRADE_STAKES_CODES = {"A", "B", "C"}  # A=G1, B=G2, C=G3（実データで確認済み）
 BABA_JOTAI_MAP = {"1": "良", "2": "稍重", "3": "重", "4": "不良"}
@@ -46,9 +47,22 @@ def _classify_track_type(track_code) -> str | None:
     return None
 
 
-def _classify_baba_jotai(turf_code, dirt_code) -> str | None:
-    code = turf_code if turf_code not in (None, "", "0") else dirt_code
-    return BABA_JOTAI_MAP.get(code)
+def _classify_baba_jotai(track_type, ra_turf_code, ra_dirt_code, we_turf_code=None, we_dirt_code=None) -> str | None:
+    """
+    種別（芝/ダート/障害）に対応するRA(蓄積系)の馬場状態コードを優先し、未確定("0")の
+    場合はWE(速報系、JVRTOpen dataspec="0B14"経由)の値で補う。レース確定前（当日の
+    出馬表段階）はRA側が常に"0"のため、当日はWE側が実質的な情報源になる。
+
+    ★WEは開催場単位で芝・ダート両方の状態が同時に非ゼロで返るため、RAのように
+    「非ゼロの方を採用」では種別を無視してしまう（ダートレースなのに芝の状態を誤採用等）。
+    必ず種別で芝/ダートのどちらのコードを見るか決める（障害は芝の状態を代用する）。
+    """
+    is_dirt = track_type == "ダート"
+    ra_code = ra_dirt_code if is_dirt else ra_turf_code
+    if ra_code not in (None, "", "0"):
+        return BABA_JOTAI_MAP.get(ra_code)
+    we_code = we_dirt_code if is_dirt else we_turf_code
+    return BABA_JOTAI_MAP.get(we_code)
 
 
 def main():
@@ -97,8 +111,26 @@ def main():
         lambda r: _classify_class(r["グレードコード"], r["競走条件コード_最若年"]), axis=1
     )
     entries["種別"] = entries["トラックコード"].apply(_classify_track_type)
+
+    # 天候馬場状態（速報系WE、JVRTOpen dataspec="0B14"経由）: レース確定前はRAの馬場状態
+    # コードが未確定("0")のため、当日はこちらが実質的な情報源になる。無ければRAのみで判定。
+    we_path = JVLINK_DATA_OUT / "we.csv"
+    if we_path.exists():
+        we_df = pd.read_csv(we_path, encoding="utf-8-sig", dtype=str)
+        we_df = we_df[(we_df["開催年"] == year) & (we_df["開催月日"] == month_day)].copy()
+        we_small = we_df[VENUE_KEY + ["馬場状態・芝", "馬場状態・ダート"]].rename(
+            columns={"馬場状態・芝": "WE芝馬場状態コード", "馬場状態・ダート": "WEダート馬場状態コード"}
+        )
+        entries = entries.merge(we_small, on=VENUE_KEY, how="left")
+    else:
+        entries["WE芝馬場状態コード"] = None
+        entries["WEダート馬場状態コード"] = None
+
     entries["馬場状態"] = entries.apply(
-        lambda r: _classify_baba_jotai(r["芝馬場状態コード"], r["ダート馬場状態コード"]), axis=1
+        lambda r: _classify_baba_jotai(
+            r["種別"], r["芝馬場状態コード"], r["ダート馬場状態コード"],
+            r["WE芝馬場状態コード"], r["WEダート馬場状態コード"],
+        ), axis=1
     )
 
     l = []
