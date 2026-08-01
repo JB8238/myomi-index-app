@@ -295,6 +295,20 @@ if df_return is not None:
         if not _df_smartrc_prep.empty:
             df = df.merge(_df_smartrc_prep, on=["場所", "R", "馬番"], how="left")
 
+    # ---- preprocessed_data から 脚質傾向・コース複勝率・距離帯複勝率 をマージ ----
+    if race_date is not None:
+        for _col in ["脚質傾向", "コース複勝率", "距離帯複勝率"]:
+            if _col in df.columns:
+                df = df.drop(columns=[_col])
+        _df_ck_prep = load_preprocessed_for_race(PREP_DIR, race_date)
+        _ck_cols = [c for c in ["場所", "R", "馬番", "脚質傾向", "コース複勝率", "距離帯複勝率"] if c in _df_ck_prep.columns]
+        if not _df_ck_prep.empty and "馬番" in _ck_cols:
+            df = df.merge(
+                _df_ck_prep[_ck_cols].drop_duplicates(subset=["場所", "R", "馬番"]),
+                on=["場所", "R", "馬番"],
+                how="left",
+            )
+
     # ---- 着順は数値比較するため数値化 ----
     if "着" in df.columns:
         df["着"] = pd.to_numeric(df["着"], errors="coerce")

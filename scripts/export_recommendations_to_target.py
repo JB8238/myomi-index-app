@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions
 from core.features import add_component_pass_count, add_race_cv_local, add_race_deviation_scores, add_deviation_component_pass
 from core.history import find_prev_total, build_prof_history
-from core.loaders import load_smartrc_from_preprocessed
+from core.loaders import load_smartrc_from_preprocessed, load_preprocessed_for_race
 from core.strategy_engine import judge
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -137,6 +137,18 @@ def build_today_df(selected_file: Path, kaisai_date: str) -> pd.DataFrame:
     df_smartrc = load_smartrc_from_preprocessed(PREP_DIR, int(kaisai_date))
     if not df_smartrc.empty:
         df = df.merge(df_smartrc, on=["場所", "R", "馬番"], how="left")
+
+    for _col in ["脚質傾向", "コース複勝率", "距離帯複勝率"]:
+        if _col in df.columns:
+            df = df.drop(columns=[_col])
+    df_ck_prep = load_preprocessed_for_race(PREP_DIR, int(kaisai_date))
+    _ck_cols = [c for c in ["場所", "R", "馬番", "脚質傾向", "コース複勝率", "距離帯複勝率"] if c in df_ck_prep.columns]
+    if not df_ck_prep.empty and "馬番" in _ck_cols:
+        df = df.merge(
+            df_ck_prep[_ck_cols].drop_duplicates(subset=["場所", "R", "馬番"]),
+            on=["場所", "R", "馬番"],
+            how="left",
+        )
 
     if "総合利益度" in df.columns:
         history = build_prof_history(str(DATA_DIR))
