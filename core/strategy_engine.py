@@ -38,6 +38,15 @@ import pandas as pd
 
 from core.binning import apply_edges, edges_to_bounds_df, fit_qcut_edges, in_interval
 
+# 「欠損＝未経験」として確定的な1カテゴリに変換して扱う特徴量。
+# 脚質傾向・コース複勝率・距離帯複勝率は、そのコース/距離/そもそも初出走で
+# 過去実績が無いために欠損する（core/ck_features.py参照）— データ不備ではなく
+# 「未経験」という意味のある状態のため、欠損値を専用ラベルとして
+# マイニング・判定の両方で確定的に扱う（△に倒さない）。
+# 人気乖離など他の特徴量の欠損は外部データの取得漏れ等で意味が異なるため対象外。
+MISSING_LABEL = "欠損"
+MISSING_AS_CATEGORY_FEATURES = {"脚質傾向", "コース複勝率", "距離帯複勝率"}
+
 
 # =========================================================
 # 時系列ブロック分割
@@ -160,14 +169,27 @@ def bh_fdr_correct(p_values, alpha: float = 0.10) -> np.ndarray:
 # 特徴量ラベル付け
 # =========================================================
 def _label_feature(subset: pd.DataFrame, col: str, is_categorical: bool, bin_q: int):
-    """戻り値: (labels: Series, bounds_df or None, feature_type)"""
+    """戻り値: (labels: Series, bounds_df or None, feature_type)
+
+    col が MISSING_AS_CATEGORY_FEATURES に含まれる場合、欠損値は捨てずに
+    専用ラベル（MISSING_LABEL）へ変換し、他の値と同じ1カテゴリとして扱う。
+    """
+    treat_missing = col in MISSING_AS_CATEGORY_FEATURES
     if is_categorical:
-        return subset[col].astype(str), None, "categorical"
+        raw = subset[col]
+        if treat_missing:
+            labels = raw.where(raw.notna(), MISSING_LABEL).astype(str)
+        else:
+            labels = raw.astype(str)
+        return labels, None, "categorical"
     edges = fit_qcut_edges(subset[col], q=bin_q)
     if edges.size == 0:
         return pd.Series(np.nan, index=subset.index), None, "continuous"
     labels = apply_edges(subset[col], edges, label_prefix=f"{col}_")
     bounds = edges_to_bounds_df(edges, label_prefix=f"{col}_")
+    if treat_missing:
+        labels = labels.astype(object)
+        labels = labels.where(labels.notna(), f"{col}_{MISSING_LABEL}")
     return labels, bounds, "continuous"
 
 
@@ -340,10 +362,26 @@ def _match_one(row: pd.Series, prefix: str, feature_values: dict):
     if fname not in feature_values:
         return None  # 不明（当日データに該当列がない）
     val = feature_values[fname]
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return None  # 不明（欠損）
-    if row.get(f"{prefix}_type") == "categorical":
-        return str(val) == str(row.get(f"{prefix}_value"))
+    is_missing_val = val is None or (isinstance(val, float) and pd.isna(val))
+    treat_missing = fname in MISSING_AS_CATEGORY_FEATURES
+    target_type = row.get(f"{prefix}_type")
+    target_label = row.get(f"{prefix}_value")
+
+    if target_type == "categorical":
+        if is_missing_val:
+            if not treat_missing:
+                return None  # 不明（欠損の意味が定義されていない特徴量）
+            return str(target_label) == MISSING_LABEL
+        return str(val) == str(target_label)
+
+    # continuous
+    is_missing_bin = treat_missing and isinstance(target_label, str) and target_label.endswith(f"_{MISSING_LABEL}")
+    if is_missing_val:
+        if not treat_missing:
+            return None  # 不明（欠損の意味が定義されていない特徴量）
+        return is_missing_bin
+    if is_missing_bin:
+        return False  # 実値があるので「欠損」ビンには該当しない
     return in_interval(val, row.get(f"{prefix}_low"), row.get(f"{prefix}_high"), bool(row.get(f"{prefix}_include_lowest")))
 
 
