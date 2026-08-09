@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from datetime import datetime
 import re
 
 from core.horse_history import load_horse_race_history, build_zensou_features
@@ -47,7 +48,10 @@ def _classify_track_type(track_code) -> str | None:
     return None
 
 
-def _classify_baba_jotai(track_type, ra_turf_code, ra_dirt_code, we_turf_code=None, we_dirt_code=None) -> str | None:
+def _classify_baba_jotai(
+    track_type, ra_turf_code, ra_dirt_code, we_turf_code=None, we_dirt_code=None,
+    allow_we_fallback: bool = True,
+) -> str | None:
     """
     種別（芝/ダート/障害）に対応するRA(蓄積系)の馬場状態コードを優先し、未確定("0")の
     場合はWE(速報系、JVRTOpen dataspec="0B14"経由)の値で補う。レース確定前（当日の
@@ -56,13 +60,41 @@ def _classify_baba_jotai(track_type, ra_turf_code, ra_dirt_code, we_turf_code=No
     ★WEは開催場単位で芝・ダート両方の状態が同時に非ゼロで返るため、RAのように
     「非ゼロの方を採用」では種別を無視してしまう（ダートレースなのに芝の状態を誤採用等）。
     必ず種別で芝/ダートのどちらのコードを見るか決める（障害は芝の状態を代用する）。
+
+    allow_we_fallback=False の場合、RA未確定("0")でもWEにはフォールバックせずNoneを返す。
+    発走時刻を過ぎているのにRAが未確定＝そのレースが終わった後にra.csvを再取得して
+    いない（古いまま）ことを意味し、その状態でWEの「現在の」値を使うと、当日中に
+    馬場状態が変化した場合に既に終わったレースの値まで最新の速報値で一律上書き
+    されてしまう（2026-08-02の運用で発覚した不具合）。呼び出し側が発走時刻を見て
+    already_started（=発走済みなのにRAが未確定）の行だけFalseを渡すことでこれを防ぐ。
     """
     is_dirt = track_type == "ダート"
     ra_code = ra_dirt_code if is_dirt else ra_turf_code
     if ra_code not in (None, "", "0"):
         return BABA_JOTAI_MAP.get(ra_code)
+    if not allow_we_fallback:
+        return None
     we_code = we_dirt_code if is_dirt else we_turf_code
     return BABA_JOTAI_MAP.get(we_code)
+
+
+def _post_time_passed(kaisai_year, kaisai_month_day, hassou_jikoku, now: datetime | None = None) -> bool:
+    """開催年+開催月日+発走時刻(HHMM)からレース発走時刻を組み立て、現在時刻を過ぎていればTrue。
+    発走時刻が未確定・パース不能な場合はFalse（＝安全側。WEフォールバックを塞がない
+    デフォルトに倒す。発走時刻はRAに通常入っているため、この分岐に落ちるのは稀）。
+    """
+    now = now or datetime.now()
+    hm = str(hassou_jikoku).strip() if hassou_jikoku is not None else ""
+    if not hm or not hm.isdigit():
+        return False  # 発走時刻が未確定・空欄ならパースできたことにしない（安全側）
+    try:
+        y = int(kaisai_year)
+        md = str(kaisai_month_day).strip().zfill(4)
+        hm = hm.zfill(4)
+        race_dt = datetime(y, int(md[:2]), int(md[2:]), int(hm[:2]), int(hm[2:]))
+    except (ValueError, TypeError):
+        return False
+    return now >= race_dt
 
 
 def main():
@@ -96,7 +128,7 @@ def main():
 
     ra_small = ra_df[RACE_KEY + [
         "距離", "グレードコード", "競走条件コード_最若年", "トラックコード",
-        "芝馬場状態コード", "ダート馬場状態コード",
+        "芝馬場状態コード", "ダート馬場状態コード", "発走時刻",
     ]].drop_duplicates(subset=RACE_KEY)
 
     entries = se_df.merge(ra_small, on=RACE_KEY, how="inner")
@@ -126,12 +158,29 @@ def main():
         entries["WE芝馬場状態コード"] = None
         entries["WEダート馬場状態コード"] = None
 
+    entries["発走済み"] = entries.apply(
+        lambda r: _post_time_passed(r["開催年"], r["開催月日"], r.get("発走時刻")), axis=1
+    )
+
     entries["馬場状態"] = entries.apply(
         lambda r: _classify_baba_jotai(
             r["種別"], r["芝馬場状態コード"], r["ダート馬場状態コード"],
             r["WE芝馬場状態コード"], r["WEダート馬場状態コード"],
+            allow_we_fallback=not r["発走済み"],
         ), axis=1
     )
+
+    # 発走済みなのにRAが未確定("0")のまま＝ra.csvがそのレースの終了後に再取得されて
+    # いない状態。WEの現在値で上書きせず空にしたので、再取得を促す警告を出す。
+    _stale = entries[entries["発走済み"] & entries["馬場状態"].isna()]
+    if not _stale.empty:
+        _races = sorted(set(zip(_stale["場所"], _stale["R"].astype("Int64"))))
+        print(
+            f"⚠ 発走時刻を過ぎているのにRAの馬場状態が未確定のレースがあります（ra.csvが古い可能性）: {_races}\n"
+            f"  馬場状態は空のままにしました（WEの現在値で誤って上書きしないため）。"
+            f"  妙味度指数_jvlink側で fetch_race_data.py --sid UNKNOWN --from <本日>000000 --option 2 を再実行し、"
+            f"  ra.csv/se.csvを最新化してからpreprocessing.pyをやり直してください。"
+        )
 
     l = []
     for age in entries["馬齢"]:
@@ -144,6 +193,20 @@ def main():
     entries["年齢"] = l
 
     entries = entries.rename(columns={"騎手名略称": "騎手名", "調教師名略称": "調教師名"})
+
+    # 騎手変更（速報系JC、WEと同じdataspec="0B14"経由）: SEの騎手名略称は再取得するまで
+    # 変更前の値のままになるため、JCで捕捉された変更後の騎手名があれば優先する。JCは
+    # レース・馬番単位の確定した変更通知であり、WEの馬場状態のように「今この瞬間の値」が
+    # 時間とともに変わる性質ではないため、発走時刻チェック（allow_we_fallback相当）は不要。
+    jc_path = JVLINK_DATA_OUT / "jc.csv"
+    if jc_path.exists():
+        jc_df = pd.read_csv(jc_path, encoding="utf-8-sig", dtype=str)
+        jc_df = jc_df[(jc_df["開催年"] == year) & (jc_df["開催月日"] == month_day)].copy()
+        jc_small = jc_df[RACE_KEY + ["馬番", "騎手名"]].rename(columns={"騎手名": "JC騎手名"})
+        jc_small["馬番"] = pd.to_numeric(jc_small["馬番"], errors="coerce")
+        entries = entries.merge(jc_small, on=RACE_KEY + ["馬番"], how="left")
+        entries["騎手名"] = entries["JC騎手名"].combine_first(entries["騎手名"])
+        entries = entries.drop(columns=["JC騎手名"])
 
     # -----------------------------
     # JV-Link由来（出走別着度数CK: 脚質傾向・コース/距離適性）
