@@ -1,8 +1,13 @@
+import sys
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
 import re
+
+# 標準出力がファイル/パイプにリダイレクトされるとcp932等にフォールバックし、
+# 絵文字混じりのprint()がUnicodeEncodeErrorで落ちうるため明示的にUTF-8化する。
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from core.horse_history import load_horse_race_history, build_zensou_features
 from core.ck_features import load_ck_data, attach_ck_features, CK_KEY_FIELDS
@@ -250,10 +255,9 @@ def main():
 
     # 道悪判定
     l = []
-    ground_pattern = re.compile(r".*良.*")
     for i in range(len(base_pre)):
         baba = base_pre.loc[i, "馬場状態"]
-        if pd.isna(baba) or ground_pattern.search(baba):
+        if pd.isna(baba) or baba == "良":
             l.append(np.nan)
         else:
             if base_pre.loc[i, "種別"] == "芝":

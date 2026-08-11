@@ -8,7 +8,6 @@ Streamlit ページから直接インポートして使用する。
 バックアップファイルを同ディレクトリに作成してから上書きする。
 """
 
-import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -25,8 +24,8 @@ def normalize_condition(val: str) -> str:
 
 
 def is_bad_track(condition: str) -> bool:
-    """道悪かどうかを判定する（preprocessing.py の .*良.* ロジックと同一）。"""
-    return not bool(re.search(r".*良.*", condition))
+    """道悪かどうかを判定する（preprocessing.py と同一ロジック）。"""
+    return condition != "良"
 
 
 def apply_changes(kaisai_date: str, changes: dict) -> dict:
