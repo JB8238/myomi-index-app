@@ -9,7 +9,7 @@ import hmac
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions, race_badge_from_horses
 from core.features import add_component_pass_count, add_race_cv_local, add_race_deviation_scores, add_deviation_component_pass
 from core.history import find_prev_total, build_prof_history
-from core.loaders import load_smartrc_from_preprocessed, load_preprocessed_for_race
+from core.loaders import load_smartrc_from_preprocessed, load_preprocessed_for_race, preprocessed_mtime_for_date
 
 
 DATA_DIR = Path("prof_result")
@@ -77,7 +77,7 @@ def pick_latest_by_filename(files):
     return dated[-1][1] if dated else None
 
 @st.cache_data(show_spinner="📘 レースレベル (preprocessed_data) を読み込んでいます…")
-def load_race_level_map(prep_root: Path, target_date: str | None) -> dict:
+def load_race_level_map(prep_root: Path, target_date: str | None, file_mtime: float | None = None) -> dict:
     """
     data/YYYY/YYYYMMDD/preprocessed_data_*.csv から
     (場所, R) -> レースレベル の辞書を作る
@@ -165,7 +165,8 @@ if MERGED_RETURN_PATH.exists():
 for _col in ["推定人気", "人気ランク"]:
     if _col in df.columns:
         df = df.drop(columns=[_col])
-_df_smartrc_prep = load_smartrc_from_preprocessed(PREP_DIR, int(kaisai_date))
+_prep_mtime = preprocessed_mtime_for_date(PREP_DIR, int(kaisai_date))
+_df_smartrc_prep = load_smartrc_from_preprocessed(PREP_DIR, int(kaisai_date), _prep_mtime)
 if not _df_smartrc_prep.empty:
     df = df.merge(_df_smartrc_prep, on=["場所", "R", "馬番"], how="left")
 
@@ -173,7 +174,7 @@ if not _df_smartrc_prep.empty:
 for _col in ["脚質傾向", "コース複勝率", "距離帯複勝率"]:
     if _col in df.columns:
         df = df.drop(columns=[_col])
-_df_ck_prep = load_preprocessed_for_race(PREP_DIR, int(kaisai_date))
+_df_ck_prep = load_preprocessed_for_race(PREP_DIR, int(kaisai_date), _prep_mtime)
 _ck_cols = [c for c in ["場所", "R", "馬番", "脚質傾向", "コース複勝率", "距離帯複勝率"] if c in _df_ck_prep.columns]
 if not _df_ck_prep.empty and "馬番" in _ck_cols:
     df = df.merge(
@@ -227,7 +228,7 @@ df = add_race_deviation_scores(df)
 df = add_deviation_component_pass(df, threshold=60)
 
 # レースレベル（preprocessed_data 由来）
-level_map = load_race_level_map(PREP_DIR, kaisai_date)
+level_map = load_race_level_map(PREP_DIR, kaisai_date, _prep_mtime)
 race_has_condition = {}
 
 for (place, r), g in df.groupby(["場所", "R"]):

@@ -8,7 +8,7 @@ import streamlit as st
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions, race_badge_from_horses
 from core.features import add_component_pass_count, add_race_cv_local, add_race_deviation_scores, add_deviation_component_pass
 from core.history import build_prof_history
-from core.loaders import load_preprocessed_for_race, load_csv, normalize_df, load_smartrc_from_preprocessed
+from core.loaders import load_preprocessed_for_race, load_csv, normalize_df, load_smartrc_from_preprocessed, preprocessed_mtime_for_date
 
 DATA_DIR = Path("prof_result")  # 指定フォルダ（自動読み込み）
 PREP_DIR = Path("data")
@@ -233,7 +233,7 @@ if st.sidebar.button("🔄 再読み込み（キャッシュクリア）"):
     st.cache_data.clear()
 
 # --- 読み込み ---
-df_raw = load_csv(str(selected_file))
+df_raw = load_csv(str(selected_file), selected_file.stat().st_mtime)
 df = normalize_df(df_raw)
 df_all = df.copy()
 
@@ -291,7 +291,7 @@ if df_return is not None:
         for _col in ["推定人気", "人気ランク"]:
             if _col in df.columns:
                 df = df.drop(columns=[_col])
-        _df_smartrc_prep = load_smartrc_from_preprocessed(PREP_DIR, race_date)
+        _df_smartrc_prep = load_smartrc_from_preprocessed(PREP_DIR, race_date, preprocessed_mtime_for_date(PREP_DIR, race_date))
         if not _df_smartrc_prep.empty:
             df = df.merge(_df_smartrc_prep, on=["場所", "R", "馬番"], how="left")
 
@@ -300,7 +300,7 @@ if df_return is not None:
         for _col in ["脚質傾向", "コース複勝率", "距離帯複勝率"]:
             if _col in df.columns:
                 df = df.drop(columns=[_col])
-        _df_ck_prep = load_preprocessed_for_race(PREP_DIR, race_date)
+        _df_ck_prep = load_preprocessed_for_race(PREP_DIR, race_date, preprocessed_mtime_for_date(PREP_DIR, race_date))
         _ck_cols = [c for c in ["場所", "R", "馬番", "脚質傾向", "コース複勝率", "距離帯複勝率"] if c in _df_ck_prep.columns]
         if not _df_ck_prep.empty and "馬番" in _ck_cols:
             df = df.merge(
@@ -352,7 +352,7 @@ df = df[df["R"] == race_no]
 df = add_deviation_component_pass(df, threshold=60)
 
 if race_date is not None:
-    df_prep = load_preprocessed_for_race(PREP_DIR, race_date)
+    df_prep = load_preprocessed_for_race(PREP_DIR, race_date, preprocessed_mtime_for_date(PREP_DIR, race_date))
     if df_prep is not None and not df_prep.empty and {"場所", "R", "レースレベル"}.issubset(df_prep.columns):
         df_prep["R"] = pd.to_numeric(df_prep["R"], errors="coerce")
         df_race = df_prep[(df_prep["場所"] == place) & (df_prep["R"] == int(race_no))]
@@ -478,7 +478,7 @@ else:
 race_level = None
 
 if race_date is not None and place is not None and race_no is not None:
-    df_prep = load_preprocessed_for_race(PREP_DIR, race_date)
+    df_prep = load_preprocessed_for_race(PREP_DIR, race_date, preprocessed_mtime_for_date(PREP_DIR, race_date))
 
     df_race = df_prep[
         (df_prep["場所"] == place) &

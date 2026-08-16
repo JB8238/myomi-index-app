@@ -9,6 +9,27 @@ from datetime import datetime
 def list_preprocessed_files(data_dir: Path):
     return sorted([p for p in data_dir.rglob("preprocessed_data_*.csv") if p.is_file()])
 
+
+def preprocessed_mtime_for_date(prep_dir: Path, target_date: int) -> float:
+    """指定日のpreprocessed_data_*.csvの最終更新時刻（無ければ0.0）。
+
+    @st.cache_data はキャッシュキーを引数のハッシュだけで決めるため、ファイルの
+    中身が変わってもパスや日付が同じなら古い結果を返し続けてしまう
+    （app.py と index_view.py で同じレースのバッジ表示が食い違う原因になっていた）。
+    この値を load_preprocessed_for_race / load_smartrc_from_preprocessed の
+    追加引数として渡すことで、preprocessing.py の再実行後は自動的にキャッシュが
+    無効化されるようにする。
+    """
+    latest = 0.0
+    for p in prep_dir.rglob("preprocessed_data_*.csv"):
+        if extract_yyyymmdd_from_name(p.name) != target_date:
+            continue
+        try:
+            latest = max(latest, p.stat().st_mtime)
+        except OSError:
+            continue
+    return latest
+
 def extract_yyyymmdd_from_name(filename: str) -> int | None:
     m = re.findall(r"(\d{8})", filename)
     for s in reversed(m):
@@ -96,7 +117,7 @@ def load_return(path: Path) -> pd.DataFrame:
     return df
 
 @st.cache_data(show_spinner="📥 preprocessed_data 読み込み中…")
-def load_preprocessed_for_race(prep_dir: Path, target_date: int) -> pd.DataFrame:
+def load_preprocessed_for_race(prep_dir: Path, target_date: int, file_mtime: float | None = None) -> pd.DataFrame:
     files = sorted(prep_dir.rglob("preprocessed_data_*.csv"))
     rows = []
 
@@ -142,7 +163,7 @@ def load_preprocessed_for_race(prep_dir: Path, target_date: int) -> pd.DataFrame
 
 
 @st.cache_data(show_spinner="📥 smartrc データ読み込み中…")
-def load_smartrc_from_preprocessed(prep_dir: Path, target_date: int) -> pd.DataFrame:
+def load_smartrc_from_preprocessed(prep_dir: Path, target_date: int, file_mtime: float | None = None) -> pd.DataFrame:
     """
     preprocessed_data_{target_date}.csv から推定人気・人気ランクを返す。
     マージ済みでない場合（列が無い）は空 DataFrame を返す。
@@ -187,7 +208,7 @@ def load_smartrc_from_preprocessed(prep_dir: Path, target_date: int) -> pd.DataF
 
 
 @st.cache_data(show_spinner="📥 CSVを読み込んでいます…")
-def load_csv(path_str: str) -> pd.DataFrame:
+def load_csv(path_str: str, file_mtime: float | None = None) -> pd.DataFrame:
     df = pd.read_csv(path_str, encoding="cp932")
     return df
 

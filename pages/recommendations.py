@@ -9,7 +9,7 @@ import streamlit as st
 from buy_condition_logic import load_buy_conditions, apply_buy_conditions
 from core.features import add_component_pass_count, add_race_cv_local, add_race_deviation_scores, add_deviation_component_pass
 from core.history import find_prev_total, build_prof_history
-from core.loaders import load_smartrc_from_preprocessed, load_preprocessed_for_race
+from core.loaders import load_smartrc_from_preprocessed, load_preprocessed_for_race, preprocessed_mtime_for_date
 from core.strategy_engine import judge
 
 DATA_DIR = Path("prof_result")
@@ -56,7 +56,7 @@ def pick_latest_by_filename(files):
 
 
 @st.cache_data(show_spinner="📘 レースレベル (preprocessed_data) を読み込んでいます…")
-def load_race_level_map(prep_root: Path, target_date: str | None) -> dict:
+def load_race_level_map(prep_root: Path, target_date: str | None, file_mtime: float | None = None) -> dict:
     if target_date is None:
         return {}
     year = target_date[:4]
@@ -137,14 +137,15 @@ if MERGED_RETURN_PATH.exists():
 for _col in ["推定人気", "人気ランク"]:
     if _col in df.columns:
         df = df.drop(columns=[_col])
-_df_smartrc_prep = load_smartrc_from_preprocessed(PREP_DIR, int(kaisai_date))
+_prep_mtime = preprocessed_mtime_for_date(PREP_DIR, int(kaisai_date))
+_df_smartrc_prep = load_smartrc_from_preprocessed(PREP_DIR, int(kaisai_date), _prep_mtime)
 if not _df_smartrc_prep.empty:
     df = df.merge(_df_smartrc_prep, on=["場所", "R", "馬番"], how="left")
 
 for _col in ["脚質傾向", "コース複勝率", "距離帯複勝率"]:
     if _col in df.columns:
         df = df.drop(columns=[_col])
-_df_ck_prep = load_preprocessed_for_race(PREP_DIR, int(kaisai_date))
+_df_ck_prep = load_preprocessed_for_race(PREP_DIR, int(kaisai_date), _prep_mtime)
 _ck_cols = [c for c in ["場所", "R", "馬番", "脚質傾向", "コース複勝率", "距離帯複勝率"] if c in _df_ck_prep.columns]
 if not _df_ck_prep.empty and "馬番" in _ck_cols:
     df = df.merge(
@@ -183,7 +184,7 @@ else:
 df = add_race_deviation_scores(df)
 df = add_deviation_component_pass(df, threshold=60)
 
-level_map = load_race_level_map(PREP_DIR, kaisai_date)
+level_map = load_race_level_map(PREP_DIR, kaisai_date, _prep_mtime)
 
 # -----------------------------------
 # 買い条件CSV読み込み（bet_typeで絞り込み）
