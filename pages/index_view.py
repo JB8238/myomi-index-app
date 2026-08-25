@@ -366,6 +366,7 @@ if race_date is not None:
         )
 
 df_all = add_component_pass_count(df_all)
+df_all = add_deviation_component_pass(df_all, threshold=60)
 df_all = add_race_cv_local(df_all)
 df_all = apply_buy_conditions(df_all, rl, cond_win, cond_plc)
 
