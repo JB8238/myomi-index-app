@@ -254,16 +254,20 @@ def main():
     base_pre["回り"] = l
 
     # 道悪判定
+    # ★障害は_classify_baba_jotaiの時点で芝の馬場状態を代用している（マスタに障害専用の
+    #   道悪列が無いため）ので、ラベルも芝道悪にする必要がある。以前は「芝以外は全部ダ道悪」
+    #   というelse節になっており、障害レースが実際には芝の値を見ているのに「ダ道悪」の
+    #   ラベルが付き、騎手・調教師・種牡馬の道悪判定利益度もダートの列で誤って照合していた
+    #   （2026-08-26発覚、693行該当）。
     l = []
     for i in range(len(base_pre)):
         baba = base_pre.loc[i, "馬場状態"]
         if pd.isna(baba) or baba == "良":
             l.append(np.nan)
+        elif base_pre.loc[i, "種別"] == "ダート":
+            l.append("ダ道悪")
         else:
-            if base_pre.loc[i, "種別"] == "芝":
-                l.append("芝道悪")
-            else:
-                l.append("ダ道悪")
+            l.append("芝道悪")
     base_pre["道悪判定"] = l
 
     # -----------------------------
@@ -293,10 +297,18 @@ def main():
         header=None,
     )
     if data_pattern == 1:
-        if int(kaisai_date) >= 20250215 and int(kaisai_date) <= 20251109:
+        # 2026-08-26に発覚: 2025-11-10以降もpeds_dataの列数は34列のまま変わって
+        # いないが、「馬名」の位置だけ19→21に戻る一方で「種牡馬名(父)」の位置は
+        # 30のまま変わっていない（sire_prof_listとの突き合わせで実データを確認済み:
+        # col30の一致率91-99%=父、col32の一致率46-51%=母父）。
+        # 旧コードは2025-11-09以前の36列時代の位置(21,32)にそのまま戻していたため、
+        # 2025-11-10以降のdata_pattern=1では実際には母父を種牡馬名として読んでいた。
+        if int(kaisai_date) < 20250215:
+            peds_df_pre = peds_df.iloc[:, [21, 32]]
+        elif int(kaisai_date) <= 20251109:
             peds_df_pre = peds_df.iloc[:, [19, 30]]
         else:
-            peds_df_pre = peds_df.iloc[:, [21, 32]]
+            peds_df_pre = peds_df.iloc[:, [21, 30]]
     elif data_pattern == 2:
         if int(kaisai_date) >= 20250215 and int(kaisai_date) <= 20251109:
             peds_df_pre = peds_df.iloc[:, [19, 28]]

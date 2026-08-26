@@ -268,76 +268,82 @@ if df_return is not None:
     if "馬番" in df_return.columns:
         df_return["馬番"] = pd.to_numeric(df_return["馬番"], errors="coerce")
 
-    # df 側もそろえる
-    if "場所" in df.columns:
-        df["場所"] = df["場所"].apply(normalize_place)
-    if "R" in df.columns:
-        df["R"] = pd.to_numeric(df["R"], errors="coerce")
-    if "馬番" in df.columns:
-        df["馬番"] = pd.to_numeric(df["馬番"], errors="coerce")
+# df 側の正規化・以降のマージは df_return の有無に関わらず行う
+# （以前はこれら全てが「if df_return is not None:」にネストされており、
+# return_data_merged.csvが無いと推定人気・脚質傾向・コース複勝率・距離帯複勝率が
+# 一切マージされず、他の3ページ（app.py/recommendations.py/export script）とは
+# 挙動が違っていた。それらは元々このガードの外で無条件に実行している）。
+if "場所" in df.columns:
+    df["場所"] = df["場所"].apply(normalize_place)
+if "R" in df.columns:
+    df["R"] = pd.to_numeric(df["R"], errors="coerce")
+if "馬番" in df.columns:
+    df["馬番"] = pd.to_numeric(df["馬番"], errors="coerce")
 
-    if df_return is not None:
-        df_ret_day = df_return[df_return["開催日"] == race_date].copy()
+if df_return is not None:
+    df_ret_day = df_return[df_return["開催日"] == race_date].copy()
 
+    df = df.merge(
+        df_ret_day,
+        on=["場所", "R", "馬番"],
+        how="left",
+        validate="m:1"
+    )
+
+# ---- preprocessed_data から 推定人気・人気ランク をマージ ----
+if race_date is not None:
+    for _col in ["推定人気", "人気ランク"]:
+        if _col in df.columns:
+            df = df.drop(columns=[_col])
+    _df_smartrc_prep = load_smartrc_from_preprocessed(PREP_DIR, race_date, preprocessed_mtime_for_date(PREP_DIR, race_date))
+    if not _df_smartrc_prep.empty:
+        df = df.merge(_df_smartrc_prep, on=["場所", "R", "馬番"], how="left")
+
+# ---- preprocessed_data から 脚質傾向・コース複勝率・距離帯複勝率 をマージ ----
+if race_date is not None:
+    for _col in ["脚質傾向", "コース複勝率", "距離帯複勝率"]:
+        if _col in df.columns:
+            df = df.drop(columns=[_col])
+    _df_ck_prep = load_preprocessed_for_race(PREP_DIR, race_date, preprocessed_mtime_for_date(PREP_DIR, race_date))
+    _ck_cols = [c for c in ["場所", "R", "馬番", "脚質傾向", "コース複勝率", "距離帯複勝率"] if c in _df_ck_prep.columns]
+    if not _df_ck_prep.empty and "馬番" in _ck_cols:
         df = df.merge(
-            df_ret_day,
+            _df_ck_prep[_ck_cols].drop_duplicates(subset=["場所", "R", "馬番"]),
             on=["場所", "R", "馬番"],
             how="left",
-            validate="m:1"
         )
 
-    # ---- preprocessed_data から 推定人気・人気ランク をマージ ----
-    if race_date is not None:
-        for _col in ["推定人気", "人気ランク"]:
-            if _col in df.columns:
-                df = df.drop(columns=[_col])
-        _df_smartrc_prep = load_smartrc_from_preprocessed(PREP_DIR, race_date, preprocessed_mtime_for_date(PREP_DIR, race_date))
-        if not _df_smartrc_prep.empty:
-            df = df.merge(_df_smartrc_prep, on=["場所", "R", "馬番"], how="left")
+# ---- 着順は数値比較するため数値化 ----
+if "着" in df.columns:
+    df["着"] = pd.to_numeric(df["着"], errors="coerce")
 
-    # ---- preprocessed_data から 脚質傾向・コース複勝率・距離帯複勝率 をマージ ----
-    if race_date is not None:
-        for _col in ["脚質傾向", "コース複勝率", "距離帯複勝率"]:
-            if _col in df.columns:
-                df = df.drop(columns=[_col])
-        _df_ck_prep = load_preprocessed_for_race(PREP_DIR, race_date, preprocessed_mtime_for_date(PREP_DIR, race_date))
-        _ck_cols = [c for c in ["場所", "R", "馬番", "脚質傾向", "コース複勝率", "距離帯複勝率"] if c in _df_ck_prep.columns]
-        if not _df_ck_prep.empty and "馬番" in _ck_cols:
-            df = df.merge(
-                _df_ck_prep[_ck_cols].drop_duplicates(subset=["場所", "R", "馬番"]),
-                on=["場所", "R", "馬番"],
-                how="left",
-            )
+# ---- return_data の着順を優先して統合 ----
+if "着_result" in df.columns:
+    df["着"] = df["着_result"].combine_first(df.get("着"))
 
-    # ---- 着順は数値比較するため数値化 ----
-    if "着" in df.columns:
-        df["着"] = pd.to_numeric(df["着"], errors="coerce")
+if "単勝" in df.columns:
+    df["単勝"] = pd.to_numeric(df["単勝"], errors="coerce")
+    df["単勝的中"] = df["単勝"] > 0
+else:
+    df["単勝的中"] = False
 
-    # ---- return_data の着順を優先して統合 ----
-    if "着_result" in df.columns:
-        df["着"] = df["着_result"].combine_first(df.get("着"))
+if "複勝" in df.columns:
+    df["複勝"] = pd.to_numeric(df["複勝"], errors="coerce")
+    df["複勝的中"] = df["複勝"] > 0
+else:
+    df["複勝的中"] = False
 
-    if "単勝" in df.columns:
-        df["単勝"] = pd.to_numeric(df["単勝"], errors="coerce")
-        df["単勝的中"] = df["単勝"] > 0
-    else:
-        df["単勝的中"] = False
 
-    if "複勝" in df.columns:
-        df["複勝"] = pd.to_numeric(df["複勝"], errors="coerce")
-        df["複勝的中"] = df["複勝"] > 0
-    else:
-        df["複勝的中"] = False
+# 視認性用（任意）
+def _hit_label(row):
+    if row.get("単勝的中", False):
+        return "単勝"
+    if row.get("複勝的中", False):
+        return "複勝"
+    return "-"
 
-    # 視認性用（任意）
-    def _hit_label(row):
-        if row.get("単勝的中", False):
-            return "単勝"
-        if row.get("複勝的中", False):
-            return "複勝"
-        return "-"
 
-    df["的中種別"] = df.apply(_hit_label, axis=1)
+df["的中種別"] = df.apply(_hit_label, axis=1)
 
 
 # return_data merge の後、偏差値計算の前
@@ -506,7 +512,20 @@ if race_level:
     filtered = filtered.copy()
     # 前提条件 (cv & 合格数) のための列を付与
     filtered = add_component_pass_count(filtered)
-    filtered = add_race_cv_local(filtered)
+
+    # cvはレース単位の集約値（総合利益度の変動係数）のため、本来「合格馬だけ」
+    # チェックボックスの状態に関わらず一定であるべきだが、以前はfiltered
+    # （チェックボックスの影響を受ける）から算出しており、チェックのON/OFFで
+    # この画面だけ判定バナーが変わってしまっていた。ホーム画面・レース変更タブの
+    # バッジと同じ固定母集団（総合利益度>=0）から算出し直す。
+    cv_population = df.copy()
+    if "総合利益度" in cv_population.columns:
+        cv_population["総合利益度"] = pd.to_numeric(cv_population["総合利益度"], errors="coerce")
+        cv_population = cv_population[cv_population["総合利益度"].notna() & (cv_population["総合利益度"] >= 0)]
+    cv_population = add_race_cv_local(cv_population)
+    fixed_cv = cv_population["cv"].iloc[0] if not cv_population.empty and "cv" in cv_population.columns else np.nan
+    filtered["cv"] = fixed_cv
+
     filtered = apply_buy_conditions(filtered, race_level, cond_win, cond_plc)
 
     if (filtered["単勝_条件"] == "✅").any():
