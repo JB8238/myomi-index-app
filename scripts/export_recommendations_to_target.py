@@ -172,18 +172,30 @@ def build_today_df(selected_file: Path, kaisai_date: str) -> pd.DataFrame:
     else:
         df["推定人気乖離"] = np.nan
 
+    # add_race_deviation_scores は ["開催日","場所","R"] でgroupbyするため、
+    # return_data とのマージ結果（該当日がまだ return_data_merged.csv に無いと
+    # 全行NaNになりうる）に依存させず、常にこの開催日で確定させる。
+    df["開催日"] = int(kaisai_date)
+
     df = add_race_deviation_scores(df)
     df = add_deviation_component_pass(df, threshold=60)
     return df
 
 
 def _feature_values(row: pd.Series) -> dict:
+    # buy_condition_logic.apply_buy_conditions内の同名関数と同じ8特徴量を渡す
+    # （馬連の判定はapply_buy_conditionsを経由しないためここで独自に組み立てる必要がある。
+    # 以前は脚質傾向・コース複勝率・距離帯複勝率の3つが抜けており、これらを参照する
+    # 馬連軸流しルールが常に判定保留(△)になっていた）。
     return {
         "利益度上昇値": row.get("利益度上昇値"),
         "人気乖離": row.get("推定人気乖離"),
         "cv": row.get("cv"),
         "合格数区分": row.get("合格数区分"),
         "偏差値合格数区分": row.get("偏差値合格数区分"),
+        "脚質傾向": row.get("脚質傾向"),
+        "コース複勝率": row.get("コース複勝率"),
+        "距離帯複勝率": row.get("距離帯複勝率"),
     }
 
 

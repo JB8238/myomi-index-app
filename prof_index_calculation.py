@@ -62,6 +62,7 @@ sire_prof_list_df["重賞"] = sire_prof_list_df["OP"]
 # 騎手の各指数を参照
 jockey_index_df = []
 jockey_columns_name = ["場所", "クラス", "種別", "距離区分", "回り", "道悪判定"]
+jockey_miss = 0
 
 
 for i in range(len(base_df_prof_preprocessed)):
@@ -81,6 +82,7 @@ for i in range(len(base_df_prof_preprocessed)):
 
     # 騎手名がマスタに無ければ、利益度6本を NaN で埋めて次へ
     if jockey_name not in jockey_prof_list_df.index:
+        jockey_miss += 1
         jockey_index_list.extend([np.nan] * len(jockey_columns_name))
         jockey_index_df.append(jockey_index_list)
         continue
@@ -103,6 +105,10 @@ for i in range(len(base_df_prof_preprocessed)):
         jockey_index_list.append(m)
 
     jockey_index_df.append(jockey_index_list)
+
+if jockey_miss > 0:
+    print(f"⚠ 騎手名がマスタ未一致: {jockey_miss}/{len(base_df_prof_preprocessed)}件"
+          f"（{jockey_miss / len(base_df_prof_preprocessed) * 100:.1f}%） — 該当馬は騎手利益度がNaNになります")
 
 jockey_index_df = pd.DataFrame(jockey_index_df)
 jockey_index_df.columns = [
@@ -134,6 +140,7 @@ jockey_index_df.to_csv(INDEX_DIR / f"jockey_prof_index_{kaisai_date}.csv", index
 # 種牡馬の各指数を参照
 sire_index_df = []
 sire_columns_name = ["場所", "クラス", "種別", "年齢", "距離区分", "回り", "距離変遷", "道悪判定"]
+sire_miss = 0
 
 for i in range(len(base_df_prof_preprocessed)):
     place = base_df_prof_preprocessed.iloc[i]["場所"]
@@ -146,6 +153,7 @@ for i in range(len(base_df_prof_preprocessed)):
 
     # 種牡馬名がマスタに無ければ、8個まとめてNaNで埋めて次へ
     if sire_name not in sire_prof_list_df.index:
+        sire_miss += 1
         sire_index_list.extend([np.nan] * len(sire_columns_name))
         sire_index_df.append(sire_index_list)
         continue
@@ -167,6 +175,10 @@ for i in range(len(base_df_prof_preprocessed)):
         sire_index_list.append(m)
 
     sire_index_df.append(sire_index_list)
+
+if sire_miss > 0:
+    print(f"⚠ 種牡馬名がマスタ未一致: {sire_miss}/{len(base_df_prof_preprocessed)}件"
+          f"（{sire_miss / len(base_df_prof_preprocessed) * 100:.1f}%） — 該当馬は種牡馬利益度がNaNになります")
 
 sire_index_df = pd.DataFrame(sire_index_df)
 sire_index_df.columns = [
@@ -198,6 +210,7 @@ sire_index_df.to_csv(INDEX_DIR / f"sire_prof_index_{kaisai_date}.csv", index=Fal
 
 trainer_index_df = []
 trainer_columns_name = ["場所", "クラス", "種別", "年齢", "距離区分", "回り", "臨戦過程", "道悪判定"]
+trainer_miss = 0
 
 
 for i in range(len(base_df_prof_preprocessed)):
@@ -217,6 +230,7 @@ for i in range(len(base_df_prof_preprocessed)):
 
     # 調教師名がマスタに無ければ、利益度8本を NaN で埋めて次へ
     if trainer_name not in trainer_prof_list_df.index:
+        trainer_miss += 1
         trainer_index_list.extend([np.nan] * len(trainer_columns_name))
         trainer_index_df.append(trainer_index_list)
         continue
@@ -239,6 +253,10 @@ for i in range(len(base_df_prof_preprocessed)):
         trainer_index_list.append(m)
 
     trainer_index_df.append(trainer_index_list)
+
+if trainer_miss > 0:
+    print(f"⚠ 調教師名がマスタ未一致: {trainer_miss}/{len(base_df_prof_preprocessed)}件"
+          f"（{trainer_miss / len(base_df_prof_preprocessed) * 100:.1f}%） — 該当馬は調教師利益度がNaNになります")
 
 trainer_index_df = pd.DataFrame(trainer_index_df)
 trainer_index_df.columns = [
@@ -277,6 +295,12 @@ index_results_df = index_results_df[[
 
 index_results_df["総合利益度"] = \
     (index_results_df["騎手利益度"] + index_results_df["種牡馬利益度"] + index_results_df["調教師利益度"]) / 1000
+
+_total_nan = int(index_results_df["総合利益度"].isna().sum())
+if _total_nan > 0:
+    print(f"⚠ 総合利益度がNaN（騎手・種牡馬・調教師のいずれかがマスタ未一致）: "
+          f"{_total_nan}/{len(index_results_df)}件（{_total_nan / len(index_results_df) * 100:.1f}%） "
+          f"— これらの馬はマイニング・買い条件判定の母集団から除外されます")
 
 index_results_df["総合利益度順位"] = index_results_df.groupby([
     "場所", "R"

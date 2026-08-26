@@ -223,6 +223,11 @@ if "総合利益度順位" in df.columns:
 else:
     df["推定人気乖離"] = np.nan
 
+# add_race_deviation_scores は ["開催日","場所","R"] でgroupbyするため、
+# return_data とのマージ結果（該当日がまだ return_data_merged.csv に無いと
+# 全行NaNになりうる）に依存させず、常にこの開催日で確定させる。
+df["開催日"] = int(kaisai_date)
+
 # 偏差値情報の付与
 df = add_race_deviation_scores(df)
 df = add_deviation_component_pass(df, threshold=60)

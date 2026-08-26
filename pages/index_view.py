@@ -351,6 +351,11 @@ df = df[df["R"] == race_no]
 
 df = add_deviation_component_pass(df, threshold=60)
 
+# race_date/place/race_no が未確定の初回表示時などに下の条件分岐が全てスキップされても
+# NameErrorでページが落ちないよう、既定値を先に確定させておく。
+rl = None
+df_prep = None
+
 if race_date is not None:
     df_prep = load_preprocessed_for_race(PREP_DIR, race_date, preprocessed_mtime_for_date(PREP_DIR, race_date))
     if df_prep is not None and not df_prep.empty and {"場所", "R", "レースレベル"}.issubset(df_prep.columns):
