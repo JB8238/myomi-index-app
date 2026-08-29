@@ -177,14 +177,21 @@ def main():
 
     # 発走済みなのにRAが未確定("0")のまま＝ra.csvがそのレースの終了後に再取得されて
     # いない状態。WEの現在値で上書きせず空にしたので、再取得を促す警告を出す。
+    # ★2026-08-26判明: --option 2（今週データ・増分配信）は同日中に再実行しても、
+    #   既に一度配信済みのレースの確定ステータス更新（未確定"0"→確定コード）を
+    #   再送してくれないことがある（エラーにはならず、静かに古いままになる）。
+    #   fetch_race_data.py側は既にアップサート方式（既存データを消さず統合）なので、
+    #   --option 4（セットアップデータ・常に現在の全件を返す）を使えば安全かつ確実に
+    #   最新の確定ステータスを取得できる。
     _stale = entries[entries["発走済み"] & entries["馬場状態"].isna()]
     if not _stale.empty:
         _races = sorted(set(zip(_stale["場所"], _stale["R"].astype("Int64"))))
         print(
             f"⚠ 発走時刻を過ぎているのにRAの馬場状態が未確定のレースがあります（ra.csvが古い可能性）: {_races}\n"
             f"  馬場状態は空のままにしました（WEの現在値で誤って上書きしないため）。"
-            f"  妙味度指数_jvlink側で fetch_race_data.py --sid UNKNOWN --from <本日>000000 --option 2 を再実行し、"
-            f"  ra.csv/se.csvを最新化してからpreprocessing.pyをやり直してください。"
+            f"  妙味度指数_jvlink側で fetch_race_data.py --sid UNKNOWN --from <本日>000000 --option 4 を再実行し、"
+            f"  ra.csv/se.csvを最新化してからpreprocessing.pyをやり直してください"
+            f"（--option 2は確定ステータスの更新を再送しないことがあるため、再取得時は--option 4を推奨）。"
         )
 
     l = []
