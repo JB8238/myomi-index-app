@@ -22,7 +22,11 @@ def build_zensou_features(today_df: pd.DataFrame, history_df: pd.DataFrame, kais
     「レース日程の週数差」（カレンダー週数、"連闘"=1週差 相当）で揃えており、後段の
     臨戦過程・距離変遷判定ロジック（-1補正込み）にそのまま渡せる。
 
-    today_df: 血統登録番号,馬名,距離（今回のレース距離）を持つ当日出走馬DataFrame
+    today_df: 血統登録番号,馬名,距離（今回のレース距離）を持つ当日出走馬DataFrame。
+      場所・R・馬番列があれば、そのまま出力にも引き継ぐ（preprocessing.py側が「馬名」
+      単独ではなく(場所,R,馬番)でこの結果をマージできるようにするため。馬名だけを
+      キーにマージすると、同姓同名馬や、同一馬がSE側の事情で一時的に複数行を持つ
+      ケースで多対多マージが発生し行が水増しされる実害があった＝2026-09-06発覚）。
     """
     cur_date = pd.to_datetime(kaisai_date, format="%Y%m%d")
     hist_before = history_df[history_df["date"] < cur_date]
@@ -50,13 +54,17 @@ def build_zensou_features(today_df: pd.DataFrame, history_df: pd.DataFrame, kais
             if len(h) >= 3:
                 interval3 = weeks_gap(dates[1], dates[2])
 
-        rows.append({
+        row = {
             "距離": r["距離"],
             "馬名": r["馬名"],
             "前走間隔": interval1,
             "前走距離": dist1,
             "前-2走前間隔": interval2,
             "2-3走前間隔": interval3,
-        })
+        }
+        for extra_col in ("場所", "R", "馬番"):
+            if extra_col in r.index:
+                row[extra_col] = r[extra_col]
+        rows.append(row)
 
     return pd.DataFrame(rows)

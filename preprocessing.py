@@ -334,7 +334,11 @@ def main():
     # -----------------------------
 
     history_df = load_horse_race_history(JVLINK_DATA_OUT / "horse_race_history.csv")
-    today_for_zensou = entries[["血統登録番号", "馬名", "距離"]].reset_index(drop=True)
+    # ★(場所,R,馬番)も一緒に持たせ、後段のマージを「馬名」単独ではなく(場所,R,馬番)で
+    #   行えるようにする。馬名単独キーだと同姓同名馬の取り違えや、同一馬がSE側の事情で
+    #   一時的に複数行を持つケースでの多対多マージによる行水増しが起こり得る
+    #   （2026-09-06発覚：血統登録番号キーでのSEアップサート修正と合わせて対応）。
+    today_for_zensou = entries[["血統登録番号", "馬名", "距離", "場所", "R", "馬番"]].reset_index(drop=True)
     zensou_df_pre = build_zensou_features(today_for_zensou, history_df, kaisai_date)
 
     zensou_df_pre = zensou_df_pre.replace("連", 1)
@@ -375,13 +379,13 @@ def main():
             n.append(np.nan)
     zensou_df_pre["距離変遷"] = n
 
-    zensou_df_pre = zensou_df_pre[["馬名", "臨戦過程", "距離変遷"]]
+    zensou_df_pre = zensou_df_pre[["場所", "R", "馬番", "臨戦過程", "距離変遷"]]
 
     # -----------------------------
     # merge
     # -----------------------------
 
-    base_df_preprocessed = base_df_preprocessed.merge(zensou_df_pre, on="馬名", how="left")
+    base_df_preprocessed = base_df_preprocessed.merge(zensou_df_pre, on=["場所", "R", "馬番"], how="left")
 
     # -----------------------------
     # 出力
